@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软音乐下载神器
 // @namespace    https://github.com/weiruankeji2025
-// @version      1.3.0
+// @version      1.4.0
 // @description  全网音乐免费下载神器 - 支持网易云音乐、QQ音乐、酷狗音乐、酷我音乐、咪咕音乐等主流平台，一键下载最高音质音乐
 // @author       威软科技
 // @match        *://music.163.com/*
@@ -27,7 +27,7 @@
 // @grant        GM_notification
 // @grant        unsafeWindow
 // @connect      *
-// @run-at       document-end
+// @run-at       document-start
 // @license      MIT
 // ==/UserScript==
 
@@ -37,10 +37,13 @@
     // ==================== 配置 ====================
     const CONFIG = {
         name: '威软音乐下载神器',
-        version: '1.3.0',
+        version: '1.4.0',
         author: '威软科技',
         debugMode: true
     };
+
+    // 获取真实的window对象（绕过Tampermonkey沙箱）
+    const realWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     // 存储捕获到的音频URL
     let capturedAudioUrls = [];
@@ -548,16 +551,18 @@
         },
 
         hookXHR: () => {
-            const originalOpen = XMLHttpRequest.prototype.open;
-            const originalSend = XMLHttpRequest.prototype.send;
+            // 使用realWindow确保Hook页面真实的XMLHttpRequest
+            const RealXHR = realWindow.XMLHttpRequest;
+            const originalOpen = RealXHR.prototype.open;
+            const originalSend = RealXHR.prototype.send;
 
-            XMLHttpRequest.prototype.open = function(method, url) {
+            RealXHR.prototype.open = function(method, url) {
                 this._url = url;
                 this._method = method;
                 return originalOpen.apply(this, arguments);
             };
 
-            XMLHttpRequest.prototype.send = function() {
+            RealXHR.prototype.send = function() {
                 const xhr = this;
                 xhr.addEventListener('load', function() {
                     // 检查请求URL
@@ -581,11 +586,14 @@
                 });
                 return originalSend.apply(this, arguments);
             };
+
+            Utils.log('XHR Hook已注入到realWindow');
         },
 
         hookFetch: () => {
-            const originalFetch = window.fetch;
-            window.fetch = async function(url, options) {
+            // 使用realWindow确保Hook页面真实的fetch
+            const originalFetch = realWindow.fetch;
+            realWindow.fetch = async function(url, options) {
                 // 检查请求URL
                 if (typeof url === 'string') {
                     AudioCapture.checkUrl(url, 'fetch-request');
@@ -612,6 +620,8 @@
 
                 return response;
             };
+
+            Utils.log('Fetch Hook已注入到realWindow');
         },
 
         // 从文本中提取音频URL
@@ -657,8 +667,10 @@
 
         // Hook URL.createObjectURL 捕获Blob音频
         hookCreateObjectURL: () => {
-            const originalCreateObjectURL = URL.createObjectURL;
-            URL.createObjectURL = function(blob) {
+            // 使用realWindow确保Hook页面真实的URL.createObjectURL
+            const RealURL = realWindow.URL;
+            const originalCreateObjectURL = RealURL.createObjectURL;
+            RealURL.createObjectURL = function(blob) {
                 const url = originalCreateObjectURL.apply(this, arguments);
 
                 // 检查是否是音频Blob
@@ -678,17 +690,21 @@
                 }
                 return url;
             };
+
+            Utils.log('URL.createObjectURL Hook已注入到realWindow');
         },
 
         // Hook AudioContext 捕获Web Audio
         hookAudioContext: () => {
-            const originalAudioContext = window.AudioContext || window.webkitAudioContext;
+            // 使用realWindow确保Hook页面真实的AudioContext
+            const originalAudioContext = realWindow.AudioContext || realWindow.webkitAudioContext;
             if (originalAudioContext) {
                 const originalDecodeAudioData = originalAudioContext.prototype.decodeAudioData;
                 originalAudioContext.prototype.decodeAudioData = function(arrayBuffer) {
                     Utils.log('检测到AudioContext解码音频数据, 大小:', arrayBuffer?.byteLength);
                     return originalDecodeAudioData.apply(this, arguments);
                 };
+                Utils.log('AudioContext Hook已注入到realWindow');
             }
         },
 
@@ -1548,15 +1564,30 @@
 
     // ==================== 初始化 ====================
     const init = () => {
-        Utils.log('脚本初始化中...');
+        Utils.log('脚本初始化中 (document-start)...');
+        Utils.log('使用unsafeWindow:', typeof unsafeWindow !== 'undefined' ? '是' : '否');
+
+        // 立即开始Hook网络请求（在DOM之前）- 使用realWindow以绕过沙箱
+        AudioCapture.hookXHR();
+        AudioCapture.hookFetch();
+        AudioCapture.hookCreateObjectURL();
+        AudioCapture.hookAudioContext();
+        Utils.log('所有网络Hook已注入到realWindow');
+
+        // 等待DOM加载后初始化UI
+        const initUI = () => {
+            AudioCapture.watchMediaElements();
+            UI.createButton();
+            UI.createModal();
+            GM_addStyle(STYLES);
+            Utils.log(`UI初始化完成! 平台: ${Utils.getPlatformName(Utils.getPlatform())}`);
+        };
 
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', UI.init);
+            document.addEventListener('DOMContentLoaded', initUI);
         } else {
-            UI.init();
+            initUI();
         }
-
-        Utils.log(`初始化完成! 平台: ${Utils.getPlatformName(Utils.getPlatform())}`);
     };
 
     init();
