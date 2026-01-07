@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软音乐下载神器
 // @namespace    https://github.com/weiruankeji2025
-// @version      1.2.1
+// @version      1.3.0
 // @description  全网音乐免费下载神器 - 支持网易云音乐、QQ音乐、酷狗音乐、酷我音乐、咪咕音乐等主流平台，一键下载最高音质音乐
 // @author       威软科技
 // @match        *://music.163.com/*
@@ -37,7 +37,7 @@
     // ==================== 配置 ====================
     const CONFIG = {
         name: '威软音乐下载神器',
-        version: '1.2.1',
+        version: '1.3.0',
         author: '威软科技',
         debugMode: true
     };
@@ -536,13 +536,15 @@
     // ==================== 音频捕获器 ====================
     const AudioCapture = {
         captured: [],
-        checkedUrls: new Set(), // 避免重复检查
+        checkedUrls: new Set(),
 
         init: () => {
             AudioCapture.hookXHR();
             AudioCapture.hookFetch();
             AudioCapture.watchMediaElements();
-            Utils.log('音频捕获器已初始化');
+            AudioCapture.hookCreateObjectURL();
+            AudioCapture.hookAudioContext();
+            Utils.log('音频捕获器已初始化 (增强版)');
         },
 
         hookXHR: () => {
@@ -551,12 +553,31 @@
 
             XMLHttpRequest.prototype.open = function(method, url) {
                 this._url = url;
+                this._method = method;
                 return originalOpen.apply(this, arguments);
             };
 
             XMLHttpRequest.prototype.send = function() {
-                this.addEventListener('load', function() {
-                    AudioCapture.checkUrl(this._url, 'xhr');
+                const xhr = this;
+                xhr.addEventListener('load', function() {
+                    // 检查请求URL
+                    AudioCapture.checkUrl(xhr._url, 'xhr-request');
+
+                    // 检查响应URL（可能重定向）
+                    if (xhr.responseURL) {
+                        AudioCapture.checkUrl(xhr.responseURL, 'xhr-response');
+                    }
+
+                    // 检查响应内容中的URL（针对QQ音乐API）
+                    try {
+                        if (xhr.responseType === '' || xhr.responseType === 'text') {
+                            const text = xhr.responseText;
+                            AudioCapture.extractUrlsFromText(text, 'xhr-content');
+                        } else if (xhr.responseType === 'json' && xhr.response) {
+                            const jsonStr = JSON.stringify(xhr.response);
+                            AudioCapture.extractUrlsFromText(jsonStr, 'xhr-json');
+                        }
+                    } catch (e) {}
                 });
                 return originalSend.apply(this, arguments);
             };
@@ -564,22 +585,127 @@
 
         hookFetch: () => {
             const originalFetch = window.fetch;
-            window.fetch = function(url, options) {
+            window.fetch = async function(url, options) {
+                // 检查请求URL
                 if (typeof url === 'string') {
-                    AudioCapture.checkUrl(url, 'fetch');
+                    AudioCapture.checkUrl(url, 'fetch-request');
+                } else if (url instanceof Request) {
+                    AudioCapture.checkUrl(url.url, 'fetch-request');
                 }
-                return originalFetch.apply(this, arguments);
+
+                const response = await originalFetch.apply(this, arguments);
+
+                // 克隆response以便读取内容
+                try {
+                    const clonedResponse = response.clone();
+                    // 检查响应URL
+                    AudioCapture.checkUrl(clonedResponse.url, 'fetch-response');
+
+                    // 尝试读取响应内容
+                    const contentType = clonedResponse.headers.get('content-type') || '';
+                    if (contentType.includes('json') || contentType.includes('text')) {
+                        clonedResponse.text().then(text => {
+                            AudioCapture.extractUrlsFromText(text, 'fetch-content');
+                        }).catch(() => {});
+                    }
+                } catch (e) {}
+
+                return response;
             };
+        },
+
+        // 从文本中提取音频URL
+        extractUrlsFromText: (text, source) => {
+            if (!text || typeof text !== 'string') return;
+
+            // QQ音乐特有的URL模式
+            const urlPatterns = [
+                // 直接URL匹配
+                /https?:\/\/[^\s"'<>]+?\.(mp3|m4a|flac|aac|ogg)(\?[^\s"'<>]*)?/gi,
+                // QQ音乐purl字段
+                /"purl"\s*:\s*"([^"]+)"/gi,
+                // QQ音乐sip+purl组合
+                /"sip"\s*:\s*\[\s*"([^"]+)"/gi,
+                // 通用音频URL
+                /https?:\/\/[^\s"'<>]*?(streamoc|qqmusic|music\.tc|dl\.stream)[^\s"'<>]*/gi,
+                // 网易云音乐URL
+                /https?:\/\/[^\s"'<>]*?music\.126\.net[^\s"'<>]*?\.mp3[^\s"'<>]*/gi,
+            ];
+
+            urlPatterns.forEach(pattern => {
+                let match;
+                while ((match = pattern.exec(text)) !== null) {
+                    let url = match[1] || match[0];
+                    // 清理URL
+                    url = url.replace(/\\u002F/g, '/').replace(/\\/g, '');
+                    if (url && url.startsWith('http')) {
+                        AudioCapture.checkUrl(url, source);
+                    }
+                }
+            });
+
+            // 特别处理QQ音乐的sip+purl组合
+            try {
+                const sipMatch = text.match(/"sip"\s*:\s*\[\s*"([^"]+)"/);
+                const purlMatch = text.match(/"purl"\s*:\s*"([^"]+)"/);
+                if (sipMatch && purlMatch && purlMatch[1]) {
+                    const fullUrl = sipMatch[1] + purlMatch[1];
+                    AudioCapture.checkUrl(fullUrl.replace(/\\/g, ''), 'qq-sip-purl');
+                }
+            } catch (e) {}
+        },
+
+        // Hook URL.createObjectURL 捕获Blob音频
+        hookCreateObjectURL: () => {
+            const originalCreateObjectURL = URL.createObjectURL;
+            URL.createObjectURL = function(blob) {
+                const url = originalCreateObjectURL.apply(this, arguments);
+
+                // 检查是否是音频Blob
+                if (blob && blob.type && blob.type.startsWith('audio/')) {
+                    Utils.log('捕获到Blob音频:', { type: blob.type, size: blob.size });
+                    // Blob URL无法直接下载，记录信息
+                    AudioCapture.captured.push({
+                        url: url,
+                        source: 'blob',
+                        time: new Date().toLocaleTimeString(),
+                        format: blob.type.split('/')[1]?.toUpperCase() || 'MP3',
+                        size: blob.size,
+                        priority: 75,
+                        isBlob: true,
+                        blob: blob
+                    });
+                }
+                return url;
+            };
+        },
+
+        // Hook AudioContext 捕获Web Audio
+        hookAudioContext: () => {
+            const originalAudioContext = window.AudioContext || window.webkitAudioContext;
+            if (originalAudioContext) {
+                const originalDecodeAudioData = originalAudioContext.prototype.decodeAudioData;
+                originalAudioContext.prototype.decodeAudioData = function(arrayBuffer) {
+                    Utils.log('检测到AudioContext解码音频数据, 大小:', arrayBuffer?.byteLength);
+                    return originalDecodeAudioData.apply(this, arguments);
+                };
+            }
         },
 
         watchMediaElements: () => {
             const checkMedia = () => {
                 document.querySelectorAll('audio, video').forEach(el => {
-                    if (el.src) {
+                    // 检查src属性
+                    if (el.src && !el.src.startsWith('blob:')) {
                         AudioCapture.checkUrl(el.src, 'media-element');
                     }
+                    // 检查currentSrc
+                    if (el.currentSrc && !el.currentSrc.startsWith('blob:')) {
+                        AudioCapture.checkUrl(el.currentSrc, 'media-currentSrc');
+                    }
+                    // 检查source子元素
                     el.querySelectorAll('source').forEach(source => {
-                        if (source.src) {
+                        if (source.src && !source.src.startsWith('blob:')) {
                             AudioCapture.checkUrl(source.src, 'source-element');
                         }
                     });
@@ -587,16 +713,20 @@
             };
 
             checkMedia();
+            // 定期检查
+            setInterval(checkMedia, 2000);
+            // DOM变化时检查
             const observer = new MutationObserver(() => checkMedia());
-            observer.observe(document.body, { childList: true, subtree: true });
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true });
         },
 
         checkUrl: (url, source) => {
             if (!url || typeof url !== 'string') return;
+            if (url.startsWith('blob:')) return; // 跳过blob URL
             if (AudioCapture.checkedUrls.has(url)) return;
             AudioCapture.checkedUrls.add(url);
 
-            // 严格的音频URL匹配 - 必须是真正的音频文件
+            // 严格的音频URL匹配
             const strictAudioPatterns = [
                 /\.mp3(\?|$)/i,
                 /\.m4a(\?|$)/i,
@@ -615,65 +745,34 @@
                 /isure\.stream\.qqmusic\.qq\.com/i,
                 /ws\.stream\.qqmusic\.qq\.com/i,
                 /aqqmusic\.tc\.qq\.com/i,
-                /qqmusic\.qq\.com.*\.m4a/i,
-                /\.qq\.com.*C\d+\.(m4a|mp3|flac)/i,
-                /\.qq\.com.*M\d+\.(m4a|mp3|flac)/i,
-                /c\.y\.qq\.com.*\.m4a/i,
-                /fromtag=\d+/i,  // QQ音乐特征参数
-                // 酷狗音乐
+                /c\.y\.qq\.com.*vkey/i,
+                /qqmusic/i,
+                /fromtag=\d+/i,
+                /vkey=[a-zA-Z0-9]+/i,
+                // 酷狗酷我咪咕
                 /fs\.kugou\.com/i,
                 /kugou\.com.*\.mp3/i,
-                /trackercdn.*kugou/i,
-                // 酷我音乐
                 /sycdn\.kuwo\.cn/i,
-                /other\.web\.rc\d+\.sycdn\.kuwo\.cn/i,
-                /kuwo\.cn.*\.mp3/i,
-                /kuwo\.cn.*\.aac/i,
-                // 咪咕音乐
+                /kuwo\.cn.*\.(mp3|aac)/i,
                 /freetyst\.nf\.migu\.cn/i,
-                /migu\.cn.*\.mp3/i,
-                /migu\.cn.*\.flac/i,
-                // 通用音频流
-                /stream.*audio/i,
-                /audio.*stream/i,
-                /play.*\.mp3/i,
-                /\.mp3\?.*vkey=/i,  // QQ音乐vkey参数
-                /guid=/i  // QQ音乐guid参数
+                /migu\.cn.*\.(mp3|flac)/i,
             ];
 
-            // 排除明显不是音频的URL
+            // 排除列表
             const excludePatterns = [
                 /\.js(\?|$)/i,
                 /\.css(\?|$)/i,
-                /\.png(\?|$)/i,
-                /\.jpg(\?|$)/i,
-                /\.jpeg(\?|$)/i,
-                /\.gif(\?|$)/i,
-                /\.svg(\?|$)/i,
-                /\.webp(\?|$)/i,
-                /\.ico(\?|$)/i,
-                /\.woff/i,
-                /\.ttf/i,
-                /analytics/i,
-                /tracking/i,
-                /beacon/i,
-                /log\./i,
-                /stat\./i,
-                /report(?!\.)/i,  // 排除report但不排除report.后面的
+                /\.(png|jpg|jpeg|gif|svg|webp|ico)(\?|$)/i,
+                /\.(woff|ttf|eot)/i,
+                /analytics|tracking|beacon/i,
                 /\.json(\?|$)/i,
-                /comment/i,
-                /lyric/i,
-                /\/lrc\//i,
-                /\.lrc(\?|$)/i
+                /comment|lyric|\.lrc/i,
             ];
 
-            const isAudio = strictAudioPatterns.some(pattern => pattern.test(url));
-            const isExcluded = excludePatterns.some(pattern => pattern.test(url));
+            const isAudio = strictAudioPatterns.some(p => p.test(url));
+            const isExcluded = excludePatterns.some(p => p.test(url));
 
-            // URL长度检查 - 太短的URL通常无效
-            const isValidLength = url.length > 30;
-
-            if (isAudio && !isExcluded && isValidLength) {
+            if (isAudio && !isExcluded && url.length > 30) {
                 if (!AudioCapture.captured.find(item => item.url === url)) {
                     const info = {
                         url: url,
@@ -692,34 +791,28 @@
         getFormat: (url) => {
             const match = url.match(/\.(mp3|m4a|flac|wav|aac|ogg|wma)/i);
             if (match) return match[1].toUpperCase();
-            // QQ音乐特殊格式检测
             if (/C\d+\.m4a|M\d+\.m4a/i.test(url)) return 'M4A';
-            if (/C\d+\.mp3|M\d+\.mp3/i.test(url)) return 'MP3';
-            if (/C\d+\.flac|M\d+\.flac/i.test(url)) return 'FLAC';
             return 'MP3';
         },
 
-        // 根据URL判断优先级（越高越好）
         getPriority: (url) => {
             if (/flac/i.test(url)) return 100;
             if (/ape/i.test(url)) return 95;
-            // QQ音乐质量参数
-            if (/C\d{3}/i.test(url)) return 85;  // QQ高品质
+            if (/C\d{3}/i.test(url)) return 85;
             if (/320|hq|high|sq/i.test(url)) return 80;
             if (/\.m4a/i.test(url)) return 70;
-            if (/M\d{3}/i.test(url)) return 65;  // QQ标准
+            if (/M\d{3}/i.test(url)) return 65;
             if (/192|medium/i.test(url)) return 50;
             if (/128|low|lq|standard/i.test(url)) return 30;
-            return 60; // 默认优先级
+            return 60;
         },
 
         getCaptured: () => {
-            // 按优先级排序，高质量在前
             return [...AudioCapture.captured].sort((a, b) => b.priority - a.priority);
         },
 
-        // 获取文件大小
         getFileSize: async (url) => {
+            if (url.startsWith('blob:')) return null;
             try {
                 return new Promise((resolve) => {
                     GM_xmlhttpRequest({
