@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软音乐下载神器
 // @namespace    https://github.com/weiruankeji2025
-// @version      1.1.1
+// @version      1.2.0
 // @description  全网音乐免费下载神器 - 支持网易云音乐、QQ音乐、酷狗音乐、酷我音乐、咪咕音乐等主流平台，一键下载最高音质音乐
 // @author       威软科技
 // @match        *://music.163.com/*
@@ -37,7 +37,7 @@
     // ==================== 配置 ====================
     const CONFIG = {
         name: '威软音乐下载神器',
-        version: '1.1.1',
+        version: '1.2.0',
         author: '威软科技',
         debugMode: true
     };
@@ -536,15 +536,12 @@
     // ==================== 音频捕获器 ====================
     const AudioCapture = {
         captured: [],
+        checkedUrls: new Set(), // 避免重复检查
 
         init: () => {
-            // 监听所有XHR请求
             AudioCapture.hookXHR();
-            // 监听fetch请求
             AudioCapture.hookFetch();
-            // 监听audio/video元素
             AudioCapture.watchMediaElements();
-
             Utils.log('音频捕获器已初始化');
         },
 
@@ -576,13 +573,11 @@
         },
 
         watchMediaElements: () => {
-            // 监听现有的audio/video元素
             const checkMedia = () => {
                 document.querySelectorAll('audio, video').forEach(el => {
                     if (el.src) {
                         AudioCapture.checkUrl(el.src, 'media-element');
                     }
-                    // 检查source子元素
                     el.querySelectorAll('source').forEach(source => {
                         if (source.src) {
                             AudioCapture.checkUrl(source.src, 'source-element');
@@ -592,58 +587,73 @@
             };
 
             checkMedia();
-
-            // 监听DOM变化
-            const observer = new MutationObserver(() => {
-                checkMedia();
-            });
+            const observer = new MutationObserver(() => checkMedia());
             observer.observe(document.body, { childList: true, subtree: true });
         },
 
         checkUrl: (url, source) => {
             if (!url || typeof url !== 'string') return;
+            if (AudioCapture.checkedUrls.has(url)) return;
+            AudioCapture.checkedUrls.add(url);
 
-            // 检查是否是音频URL
-            const audioPatterns = [
+            // 严格的音频URL匹配 - 必须是真正的音频文件
+            const strictAudioPatterns = [
                 /\.mp3(\?|$)/i,
                 /\.m4a(\?|$)/i,
                 /\.flac(\?|$)/i,
                 /\.wav(\?|$)/i,
                 /\.aac(\?|$)/i,
                 /\.ogg(\?|$)/i,
-                /\.wma(\?|$)/i,
-                /audio/i,
-                /music/i,
-                /song/i,
-                /vod.*m3u8/i,
-                /m4s.*audio/i
+                /\/\d+\.mp3/i,           // 网易云格式
+                /m\d+\.music\./i,        // 网易云CDN
+                /music\.126\.net.*\.mp3/i,
+                /\.qq\.com.*\.m4a/i,     // QQ音乐
+                /stream.*audio/i,
+                /play.*\.mp3/i
             ];
 
-            const isAudio = audioPatterns.some(pattern => pattern.test(url));
-
-            // 排除一些不需要的URL
+            // 排除明显不是音频的URL
             const excludePatterns = [
                 /\.js(\?|$)/i,
                 /\.css(\?|$)/i,
                 /\.png(\?|$)/i,
                 /\.jpg(\?|$)/i,
+                /\.jpeg(\?|$)/i,
                 /\.gif(\?|$)/i,
                 /\.svg(\?|$)/i,
+                /\.webp(\?|$)/i,
+                /\.ico(\?|$)/i,
+                /\.woff/i,
+                /\.ttf/i,
                 /analytics/i,
                 /tracking/i,
-                /advertisement/i
+                /beacon/i,
+                /log\./i,
+                /stat\./i,
+                /report/i,
+                /api\/v\d/i,     // 排除API调用
+                /\.json(\?|$)/i,
+                /\/api\//i,
+                /comment/i,
+                /lyric/i,
+                /lrc/i
             ];
 
+            const isAudio = strictAudioPatterns.some(pattern => pattern.test(url));
             const isExcluded = excludePatterns.some(pattern => pattern.test(url));
 
-            if (isAudio && !isExcluded) {
-                // 避免重复添加
+            // URL长度检查 - 太短的URL通常无效
+            const isValidLength = url.length > 50;
+
+            if (isAudio && !isExcluded && isValidLength) {
                 if (!AudioCapture.captured.find(item => item.url === url)) {
                     const info = {
                         url: url,
                         source: source,
                         time: new Date().toLocaleTimeString(),
-                        format: AudioCapture.getFormat(url)
+                        format: AudioCapture.getFormat(url),
+                        size: null,  // 稍后获取
+                        priority: AudioCapture.getPriority(url)
                     };
                     AudioCapture.captured.push(info);
                     Utils.log('捕获到音频:', info);
@@ -656,12 +666,45 @@
             return match ? match[1].toUpperCase() : 'MP3';
         },
 
+        // 根据URL判断优先级（越高越好）
+        getPriority: (url) => {
+            if (/flac/i.test(url)) return 100;
+            if (/320|hq|high/i.test(url)) return 80;
+            if (/\.m4a/i.test(url)) return 70;
+            if (/192|medium/i.test(url)) return 50;
+            if (/128|low|lq/i.test(url)) return 30;
+            return 60; // 默认优先级
+        },
+
         getCaptured: () => {
-            return AudioCapture.captured;
+            // 按优先级排序，高质量在前
+            return [...AudioCapture.captured].sort((a, b) => b.priority - a.priority);
+        },
+
+        // 获取文件大小
+        getFileSize: async (url) => {
+            try {
+                return new Promise((resolve) => {
+                    GM_xmlhttpRequest({
+                        method: 'HEAD',
+                        url: url,
+                        timeout: 5000,
+                        onload: (response) => {
+                            const size = response.responseHeaders.match(/content-length:\s*(\d+)/i);
+                            resolve(size ? parseInt(size[1]) : null);
+                        },
+                        onerror: () => resolve(null),
+                        ontimeout: () => resolve(null)
+                    });
+                });
+            } catch (e) {
+                return null;
+            }
         },
 
         clear: () => {
             AudioCapture.captured = [];
+            AudioCapture.checkedUrls.clear();
         }
     };
 
@@ -1182,32 +1225,6 @@
             Utils.log('API URLs:', apiUrls);
             Utils.log('捕获的URLs:', capturedUrls);
 
-            // 构建UI
-            let html = '';
-
-            // 提示信息
-            html += `
-                <div class="wr-tips">
-                    <strong>使用提示：</strong>
-                    请先播放音乐，脚本会自动捕获播放的音频链接。如果没有捕获到，请刷新页面后重新播放。
-                </div>
-            `;
-
-            // 歌曲信息
-            if (songInfo) {
-                html += `
-                    <div class="wr-song-info">
-                        <img class="wr-song-cover" src="${songInfo.cover || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2NjYyIgZD0iTTEyIDNhOSA5IDAgMCAwLTkgOXY3YzAgMS4xLjkgMiAyIDJoNHYtOEg1di0xYzAtMy44NyAzLjEzLTcgNy03czMuMTMgNyA3djFoLTR2OGg0YzEuMSAwIDItLjkgMi0ydi03YTkgOSAwIDAgMC05LTl6Ii8+PC9zdmc+'}"
-                             onerror="this.style.background='#ddd'">
-                        <div class="wr-song-details">
-                            <h3>${songInfo.name || '未知歌曲'}</h3>
-                            <p>${songInfo.artist || '未知歌手'}${songInfo.album ? ' · ' + songInfo.album : ''}</p>
-                            <span class="wr-platform-badge wr-platform-${platform}">${platformName}</span>
-                        </div>
-                    </div>
-                `;
-            }
-
             // 合并所有可用的下载链接
             const allUrls = [];
 
@@ -1215,7 +1232,8 @@
             apiUrls.forEach(item => {
                 allUrls.push({
                     ...item,
-                    source: 'API'
+                    source: 'API',
+                    priority: item.priority || 70
                 });
             });
 
@@ -1225,96 +1243,172 @@
                     url: item.url,
                     quality: '捕获音频',
                     format: item.format,
-                    source: '页面捕获'
+                    source: '页面捕获',
+                    priority: item.priority || 60
                 });
             });
 
-            if (allUrls.length > 0) {
-                html += `
-                    <div class="wr-audio-list">
-                        <div class="wr-audio-list-title">
-                            可用下载链接 <span class="count">${allUrls.length}</span>
-                            <button class="wr-refresh-btn wr-do-refresh">刷新页面</button>
+            // 按优先级排序
+            allUrls.sort((a, b) => b.priority - a.priority);
+
+            // 构建UI - 先显示加载状态
+            content.innerHTML = `
+                <div class="wr-tips">
+                    <strong>使用提示：</strong>
+                    请先播放音乐，脚本会自动捕获播放的音频链接。建议选择文件大小较大的链接下载。
+                </div>
+                ${songInfo ? `
+                    <div class="wr-song-info">
+                        <img class="wr-song-cover" src="${songInfo.cover || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2NjYyIgZD0iTTEyIDNhOSA5IDAgMCAwLTkgOXY3YzAgMS4xLjkgMiAyIDJoNHYtOEg1di0xYzAtMy44NyAzLjEzLTcgNy03czMuMTMgNyA3djFoLTR2OGg0YzEuMSAwIDItLjkgMi0ydi03YTkgOSAwIDAgMC05LTl6Ii8+PC9zdmc+'}"
+                             onerror="this.style.background='#ddd'">
+                        <div class="wr-song-details">
+                            <h3>${songInfo.name || '未知歌曲'}</h3>
+                            <p>${songInfo.artist || '未知歌手'}${songInfo.album ? ' · ' + songInfo.album : ''}</p>
+                            <span class="wr-platform-badge wr-platform-${platform}">${platformName}</span>
                         </div>
-                `;
-
-                allUrls.forEach((item, index) => {
-                    const filename = songInfo
-                        ? Utils.sanitizeFilename(`${songInfo.name} - ${songInfo.artist}.${item.format.toLowerCase()}`)
-                        : `music_${index + 1}.${item.format.toLowerCase()}`;
-
-                    html += `
-                        <div class="wr-audio-item">
-                            <div class="wr-audio-item-info">
-                                <div class="wr-audio-item-name">${item.quality} (${item.format})</div>
-                                <div class="wr-audio-item-meta">来源: ${item.source}</div>
+                    </div>
+                ` : ''}
+                <div class="wr-audio-list">
+                    <div class="wr-audio-list-title">
+                        可用下载链接 <span class="count">${allUrls.length}</span>
+                        <button class="wr-refresh-btn wr-do-refresh">刷新页面</button>
+                    </div>
+                    <div id="wr-url-list">
+                        ${allUrls.length > 0 ? '<div class="wr-status-message loading">正在检测文件大小...</div>' : `
+                            <div class="wr-status-message">
+                                <p>未捕获到音频链接</p>
+                                <p style="font-size: 12px; margin-top: 10px;">
+                                    请确保音乐正在播放，或尝试刷新页面后重新播放
+                                </p>
                             </div>
-                            <button class="wr-audio-item-btn wr-do-download" data-url="${encodeURIComponent(item.url)}" data-filename="${encodeURIComponent(filename)}">
-                                下载
-                            </button>
-                        </div>
-                    `;
+                        `}
+                    </div>
+                </div>
+            `;
+
+            // 如果有链接，异步获取文件大小
+            if (allUrls.length > 0) {
+                const urlListContainer = document.getElementById('wr-url-list');
+                const validUrls = [];
+
+                // 并行获取所有文件大小
+                const sizePromises = allUrls.map(async (item, index) => {
+                    const size = await AudioCapture.getFileSize(item.url);
+                    return { ...item, size, index };
                 });
 
-                html += `</div>`;
+                const results = await Promise.all(sizePromises);
 
-                // 主下载按钮
-                if (allUrls.length > 0 && songInfo) {
-                    const bestUrl = allUrls[0];
-                    const filename = Utils.sanitizeFilename(`${songInfo.name} - ${songInfo.artist}.${bestUrl.format.toLowerCase()}`);
+                // 过滤掉太小的文件（小于100KB可能是无效链接）
+                results.forEach(item => {
+                    if (item.size === null || item.size > 100 * 1024) {
+                        validUrls.push(item);
+                    }
+                });
 
-                    html += `
-                        <button class="wr-download-btn wr-do-download" data-url="${encodeURIComponent(bestUrl.url)}" data-filename="${encodeURIComponent(filename)}">
+                // 按文件大小排序（大的在前）
+                validUrls.sort((a, b) => (b.size || 0) - (a.size || 0));
+
+                if (validUrls.length > 0) {
+                    let listHtml = '';
+                    validUrls.forEach((item, index) => {
+                        const filename = songInfo
+                            ? Utils.sanitizeFilename(`${songInfo.name} - ${songInfo.artist}.${item.format.toLowerCase()}`)
+                            : `music_${index + 1}.${item.format.toLowerCase()}`;
+
+                        const sizeText = item.size ? Utils.formatFileSize(item.size) : '未知大小';
+                        const qualityHint = item.size && item.size > 5 * 1024 * 1024 ? '推荐' : '';
+
+                        listHtml += `
+                            <div class="wr-audio-item ${qualityHint ? 'wr-recommended' : ''}">
+                                <div class="wr-audio-item-info">
+                                    <div class="wr-audio-item-name">
+                                        ${item.format} ${qualityHint ? '<span style="color:#11998e;font-size:11px;margin-left:5px;">★ 推荐</span>' : ''}
+                                    </div>
+                                    <div class="wr-audio-item-meta">大小: ${sizeText} | 来源: ${item.source}</div>
+                                </div>
+                                <button class="wr-audio-item-btn wr-do-download" data-url="${encodeURIComponent(item.url)}" data-filename="${encodeURIComponent(filename)}">
+                                    下载
+                                </button>
+                            </div>
+                        `;
+                    });
+
+                    urlListContainer.innerHTML = listHtml;
+
+                    // 添加主下载按钮（选择最大的文件）
+                    const bestUrl = validUrls[0];
+                    const bestFilename = songInfo
+                        ? Utils.sanitizeFilename(`${songInfo.name} - ${songInfo.artist}.${bestUrl.format.toLowerCase()}`)
+                        : `music_best.${bestUrl.format.toLowerCase()}`;
+
+                    const mainBtnHtml = `
+                        <button class="wr-download-btn wr-do-download" data-url="${encodeURIComponent(bestUrl.url)}" data-filename="${encodeURIComponent(bestFilename)}">
                             <svg viewBox="0 0 24 24">
                                 <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
                             </svg>
-                            下载最佳音质
+                            下载最佳音质 (${bestUrl.size ? Utils.formatFileSize(bestUrl.size) : bestUrl.format})
                         </button>
                     `;
-                }
-            } else {
-                html += `
-                    <div class="wr-audio-list">
-                        <div class="wr-audio-list-title">
-                            可用下载链接 <span class="count">0</span>
-                            <button class="wr-refresh-btn wr-do-refresh">刷新页面</button>
-                        </div>
+                    urlListContainer.insertAdjacentHTML('afterend', mainBtnHtml);
+                } else {
+                    urlListContainer.innerHTML = `
                         <div class="wr-status-message">
-                            <p>未捕获到音频链接</p>
+                            <p>未找到有效的音频文件</p>
                             <p style="font-size: 12px; margin-top: 10px;">
-                                请确保音乐正在播放，或尝试刷新页面后重新播放
+                                捕获的链接可能是无效的，请尝试刷新页面后重新播放
                             </p>
                         </div>
-                    </div>
-                `;
+                    `;
+                }
             }
 
-            content.innerHTML = html;
-
             // 绑定事件（使用事件委托避免沙箱隔离问题）
-            content.addEventListener('click', async (e) => {
-                const downloadBtn = e.target.closest('.wr-do-download');
-                const refreshBtn = e.target.closest('.wr-do-refresh');
+            // 使用标记防止重复绑定
+            if (!content.dataset.bindEvents) {
+                content.dataset.bindEvents = 'true';
+                content.addEventListener('click', async (e) => {
+                    const downloadBtn = e.target.closest('.wr-do-download');
+                    const refreshBtn = e.target.closest('.wr-do-refresh');
 
-                if (downloadBtn) {
-                    e.preventDefault();
-                    const url = decodeURIComponent(downloadBtn.dataset.url);
-                    const filename = decodeURIComponent(downloadBtn.dataset.filename);
-                    Utils.log('开始下载:', { url, filename });
-                    Utils.toast('正在下载...', 'info');
-                    try {
-                        await Utils.downloadWithFetch(url, filename);
-                    } catch (err) {
-                        Utils.log('下载失败:', err);
-                        Utils.toast('下载失败，请重试', 'error');
+                    if (downloadBtn && !downloadBtn.disabled) {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        // 防止重复点击
+                        if (downloadBtn.dataset.downloading === 'true') {
+                            Utils.toast('正在下载中，请稍候...', 'info');
+                            return;
+                        }
+
+                        downloadBtn.dataset.downloading = 'true';
+                        const originalText = downloadBtn.innerHTML;
+                        downloadBtn.innerHTML = '下载中...';
+                        downloadBtn.style.opacity = '0.6';
+
+                        const url = decodeURIComponent(downloadBtn.dataset.url);
+                        const filename = decodeURIComponent(downloadBtn.dataset.filename);
+                        Utils.log('开始下载:', { url, filename });
+
+                        try {
+                            await Utils.downloadWithFetch(url, filename);
+                            downloadBtn.innerHTML = '已下载';
+                            downloadBtn.style.background = 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)';
+                        } catch (err) {
+                            Utils.log('下载失败:', err);
+                            Utils.toast('下载失败，请重试', 'error');
+                            downloadBtn.innerHTML = originalText;
+                            downloadBtn.style.opacity = '1';
+                            downloadBtn.dataset.downloading = 'false';
+                        }
                     }
-                }
 
-                if (refreshBtn) {
-                    e.preventDefault();
-                    location.reload();
-                }
-            });
+                    if (refreshBtn) {
+                        e.preventDefault();
+                        location.reload();
+                    }
+                });
+            }
         },
 
         closeModal: () => {
