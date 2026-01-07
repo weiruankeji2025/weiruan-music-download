@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软音乐下载神器
 // @namespace    https://github.com/weiruankeji2025
-// @version      1.2.0
+// @version      1.2.1
 // @description  全网音乐免费下载神器 - 支持网易云音乐、QQ音乐、酷狗音乐、酷我音乐、咪咕音乐等主流平台，一键下载最高音质音乐
 // @author       威软科技
 // @match        *://music.163.com/*
@@ -37,7 +37,7 @@
     // ==================== 配置 ====================
     const CONFIG = {
         name: '威软音乐下载神器',
-        version: '1.2.0',
+        version: '1.2.1',
         author: '威软科技',
         debugMode: true
     };
@@ -604,12 +604,41 @@
                 /\.wav(\?|$)/i,
                 /\.aac(\?|$)/i,
                 /\.ogg(\?|$)/i,
-                /\/\d+\.mp3/i,           // 网易云格式
-                /m\d+\.music\./i,        // 网易云CDN
+                // 网易云音乐
+                /\/\d+\.mp3/i,
+                /m\d+\.music\./i,
                 /music\.126\.net.*\.mp3/i,
-                /\.qq\.com.*\.m4a/i,     // QQ音乐
+                /m\d+c?\d*\.music\.126\.net/i,
+                // QQ音乐 - 多种CDN格式
+                /streamoc\.music\.tc\.qq\.com/i,
+                /dl\.stream\.qqmusic\.qq\.com/i,
+                /isure\.stream\.qqmusic\.qq\.com/i,
+                /ws\.stream\.qqmusic\.qq\.com/i,
+                /aqqmusic\.tc\.qq\.com/i,
+                /qqmusic\.qq\.com.*\.m4a/i,
+                /\.qq\.com.*C\d+\.(m4a|mp3|flac)/i,
+                /\.qq\.com.*M\d+\.(m4a|mp3|flac)/i,
+                /c\.y\.qq\.com.*\.m4a/i,
+                /fromtag=\d+/i,  // QQ音乐特征参数
+                // 酷狗音乐
+                /fs\.kugou\.com/i,
+                /kugou\.com.*\.mp3/i,
+                /trackercdn.*kugou/i,
+                // 酷我音乐
+                /sycdn\.kuwo\.cn/i,
+                /other\.web\.rc\d+\.sycdn\.kuwo\.cn/i,
+                /kuwo\.cn.*\.mp3/i,
+                /kuwo\.cn.*\.aac/i,
+                // 咪咕音乐
+                /freetyst\.nf\.migu\.cn/i,
+                /migu\.cn.*\.mp3/i,
+                /migu\.cn.*\.flac/i,
+                // 通用音频流
                 /stream.*audio/i,
-                /play.*\.mp3/i
+                /audio.*stream/i,
+                /play.*\.mp3/i,
+                /\.mp3\?.*vkey=/i,  // QQ音乐vkey参数
+                /guid=/i  // QQ音乐guid参数
             ];
 
             // 排除明显不是音频的URL
@@ -630,20 +659,19 @@
                 /beacon/i,
                 /log\./i,
                 /stat\./i,
-                /report/i,
-                /api\/v\d/i,     // 排除API调用
+                /report(?!\.)/i,  // 排除report但不排除report.后面的
                 /\.json(\?|$)/i,
-                /\/api\//i,
                 /comment/i,
                 /lyric/i,
-                /lrc/i
+                /\/lrc\//i,
+                /\.lrc(\?|$)/i
             ];
 
             const isAudio = strictAudioPatterns.some(pattern => pattern.test(url));
             const isExcluded = excludePatterns.some(pattern => pattern.test(url));
 
             // URL长度检查 - 太短的URL通常无效
-            const isValidLength = url.length > 50;
+            const isValidLength = url.length > 30;
 
             if (isAudio && !isExcluded && isValidLength) {
                 if (!AudioCapture.captured.find(item => item.url === url)) {
@@ -652,7 +680,7 @@
                         source: source,
                         time: new Date().toLocaleTimeString(),
                         format: AudioCapture.getFormat(url),
-                        size: null,  // 稍后获取
+                        size: null,
                         priority: AudioCapture.getPriority(url)
                     };
                     AudioCapture.captured.push(info);
@@ -663,16 +691,25 @@
 
         getFormat: (url) => {
             const match = url.match(/\.(mp3|m4a|flac|wav|aac|ogg|wma)/i);
-            return match ? match[1].toUpperCase() : 'MP3';
+            if (match) return match[1].toUpperCase();
+            // QQ音乐特殊格式检测
+            if (/C\d+\.m4a|M\d+\.m4a/i.test(url)) return 'M4A';
+            if (/C\d+\.mp3|M\d+\.mp3/i.test(url)) return 'MP3';
+            if (/C\d+\.flac|M\d+\.flac/i.test(url)) return 'FLAC';
+            return 'MP3';
         },
 
         // 根据URL判断优先级（越高越好）
         getPriority: (url) => {
             if (/flac/i.test(url)) return 100;
-            if (/320|hq|high/i.test(url)) return 80;
+            if (/ape/i.test(url)) return 95;
+            // QQ音乐质量参数
+            if (/C\d{3}/i.test(url)) return 85;  // QQ高品质
+            if (/320|hq|high|sq/i.test(url)) return 80;
             if (/\.m4a/i.test(url)) return 70;
+            if (/M\d{3}/i.test(url)) return 65;  // QQ标准
             if (/192|medium/i.test(url)) return 50;
-            if (/128|low|lq/i.test(url)) return 30;
+            if (/128|low|lq|standard/i.test(url)) return 30;
             return 60; // 默认优先级
         },
 
