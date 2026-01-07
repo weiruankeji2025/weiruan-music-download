@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软音乐下载神器
 // @namespace    https://github.com/weiruankeji2025
-// @version      1.0.0
+// @version      1.1.0
 // @description  全网音乐免费下载神器 - 支持网易云音乐、QQ音乐、酷狗音乐、酷我音乐、咪咕音乐等主流平台，一键下载最高音质音乐
 // @author       威软科技
 // @match        *://music.163.com/*
@@ -16,11 +16,9 @@
 // @match        *://*.migu.cn/*
 // @match        *://www.ximalaya.com/*
 // @match        *://*.ximalaya.com/*
-// @match        *://music.youtube.com/*
-// @match        *://open.spotify.com/*
 // @match        *://www.bilibili.com/*
 // @match        *://*.bilibili.com/*
-// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzFEQjk1NCIgZD0iTTEyIDNhOSA5IDAgMCAwLTkgOXY3YzAgMS4xLjkgMiAyIDJoNHYtOEg1di0xYzAtMy44NyAzLjEzLTcgNy03czMuMTMgNyA3djFoLTR2OGg0YzEuMSAwIDItLjkgMi0ydi03YTkgOSAwIDAgMC05LTl6Ii8+PC9zdmc+
+// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzY2N2VlYSIgZD0iTTEyIDNhOSA5IDAgMCAwLTkgOXY3YzAgMS4xLjkgMiAyIDJoNHYtOEg1di0xYzAtMy44NyAzLjEzLTcgNy03czMuMTMgNyA3djFoLTR2OGg0YzEuMSAwIDItLjkgMi0ydi03YTkgOSAwIDAgMC05LTl6Ii8+PC9zdmc+
 // @grant        GM_xmlhttpRequest
 // @grant        GM_download
 // @grant        GM_addStyle
@@ -39,16 +37,17 @@
     // ==================== 配置 ====================
     const CONFIG = {
         name: '威软音乐下载神器',
-        version: '1.0.0',
+        version: '1.1.0',
         author: '威软科技',
-        defaultQuality: 'high', // low, medium, high, lossless
-        showNotification: true,
-        debugMode: false
+        debugMode: true
     };
+
+    // 存储捕获到的音频URL
+    let capturedAudioUrls = [];
+    let currentSongInfo = null;
 
     // ==================== 样式 ====================
     const STYLES = `
-        /* 主按钮样式 */
         .wr-music-download-btn {
             position: fixed;
             right: 20px;
@@ -67,19 +66,15 @@
             border: none;
             outline: none;
         }
-
         .wr-music-download-btn:hover {
             transform: scale(1.1);
             box-shadow: 0 6px 25px rgba(102, 126, 234, 0.6);
         }
-
         .wr-music-download-btn svg {
             width: 30px;
             height: 30px;
             fill: white;
         }
-
-        /* 弹窗样式 */
         .wr-music-modal-overlay {
             position: fixed;
             top: 0;
@@ -95,45 +90,39 @@
             visibility: hidden;
             transition: all 0.3s ease;
         }
-
         .wr-music-modal-overlay.active {
             opacity: 1;
             visibility: visible;
         }
-
         .wr-music-modal {
             background: #fff;
             border-radius: 16px;
-            width: 420px;
+            width: 450px;
             max-width: 90vw;
-            max-height: 80vh;
+            max-height: 85vh;
             overflow: hidden;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             transform: scale(0.9);
             transition: transform 0.3s ease;
         }
-
         .wr-music-modal-overlay.active .wr-music-modal {
             transform: scale(1);
         }
-
         .wr-music-modal-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             padding: 20px;
             color: white;
+            position: relative;
         }
-
         .wr-music-modal-title {
             font-size: 20px;
             font-weight: 600;
             margin: 0 0 5px 0;
         }
-
         .wr-music-modal-subtitle {
             font-size: 12px;
             opacity: 0.8;
         }
-
         .wr-music-modal-close {
             position: absolute;
             top: 15px;
@@ -151,18 +140,14 @@
             justify-content: center;
             transition: background 0.3s;
         }
-
         .wr-music-modal-close:hover {
             background: rgba(255, 255, 255, 0.3);
         }
-
         .wr-music-modal-body {
             padding: 20px;
-            max-height: 400px;
+            max-height: 500px;
             overflow-y: auto;
         }
-
-        /* 歌曲信息 */
         .wr-song-info {
             display: flex;
             align-items: center;
@@ -171,81 +156,90 @@
             border-radius: 12px;
             margin-bottom: 20px;
         }
-
         .wr-song-cover {
-            width: 60px;
-            height: 60px;
+            width: 70px;
+            height: 70px;
             border-radius: 8px;
             object-fit: cover;
             margin-right: 15px;
+            background: #ddd;
         }
-
         .wr-song-details h3 {
             margin: 0 0 5px 0;
             font-size: 16px;
             color: #333;
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
-
         .wr-song-details p {
             margin: 0;
             font-size: 13px;
             color: #666;
         }
-
-        /* 质量选择 */
-        .wr-quality-section {
-            margin-bottom: 20px;
+        .wr-audio-list {
+            margin-bottom: 15px;
         }
-
-        .wr-quality-title {
+        .wr-audio-list-title {
             font-size: 14px;
             font-weight: 600;
             color: #333;
             margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-
-        .wr-quality-options {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 10px;
-        }
-
-        .wr-quality-option {
-            padding: 12px;
-            border: 2px solid #e9ecef;
+        .wr-audio-list-title .count {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2px 8px;
             border-radius: 10px;
-            cursor: pointer;
+            font-size: 12px;
+        }
+        .wr-audio-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 8px;
             transition: all 0.3s;
-            text-align: center;
         }
-
-        .wr-quality-option:hover {
-            border-color: #667eea;
+        .wr-audio-item:hover {
+            background: #eef0f5;
         }
-
-        .wr-quality-option.selected {
-            border-color: #667eea;
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        .wr-audio-item-info {
+            flex: 1;
+            min-width: 0;
         }
-
-        .wr-quality-option .quality-name {
-            font-size: 14px;
-            font-weight: 600;
+        .wr-audio-item-name {
+            font-size: 13px;
             color: #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 3px;
         }
-
-        .wr-quality-option .quality-desc {
+        .wr-audio-item-meta {
             font-size: 11px;
             color: #999;
-            margin-top: 3px;
         }
-
-        .wr-quality-option.disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
+        .wr-audio-item-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            white-space: nowrap;
         }
-
-        /* 下载按钮 */
+        .wr-audio-item-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 3px 10px rgba(102, 126, 234, 0.4);
+        }
         .wr-download-btn {
             width: 100%;
             padding: 15px;
@@ -262,135 +256,25 @@
             justify-content: center;
             gap: 10px;
         }
-
         .wr-download-btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
         }
-
         .wr-download-btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
             transform: none;
         }
-
         .wr-download-btn svg {
             width: 20px;
             height: 20px;
             fill: white;
         }
-
-        /* 进度条 */
-        .wr-progress-container {
-            margin-top: 15px;
-            display: none;
-        }
-
-        .wr-progress-container.active {
-            display: block;
-        }
-
-        .wr-progress-bar {
-            height: 8px;
-            background: #e9ecef;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .wr-progress-fill {
-            height: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-
-        .wr-progress-text {
-            font-size: 12px;
-            color: #666;
-            text-align: center;
-            margin-top: 8px;
-        }
-
-        /* 歌曲列表 */
-        .wr-song-list {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .wr-song-item {
-            display: flex;
-            align-items: center;
-            padding: 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-
-        .wr-song-item:hover {
-            background: #f8f9fa;
-        }
-
-        .wr-song-item-cover {
-            width: 45px;
-            height: 45px;
-            border-radius: 6px;
-            object-fit: cover;
-            margin-right: 12px;
-        }
-
-        .wr-song-item-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .wr-song-item-title {
-            font-size: 14px;
-            font-weight: 500;
-            color: #333;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .wr-song-item-artist {
-            font-size: 12px;
-            color: #999;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .wr-song-item-download {
-            width: 36px;
-            height: 36px;
-            border: none;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.3s;
-        }
-
-        .wr-song-item-download:hover {
-            transform: scale(1.1);
-        }
-
-        .wr-song-item-download svg {
-            width: 18px;
-            height: 18px;
-            fill: white;
-        }
-
-        /* 状态提示 */
         .wr-status-message {
             text-align: center;
             padding: 40px 20px;
             color: #666;
         }
-
         .wr-status-message.loading::before {
             content: '';
             display: block;
@@ -402,12 +286,9 @@
             border-radius: 50%;
             animation: wr-spin 1s linear infinite;
         }
-
         @keyframes wr-spin {
             to { transform: rotate(360deg); }
         }
-
-        /* Toast通知 */
         .wr-toast {
             position: fixed;
             bottom: 180px;
@@ -422,21 +303,29 @@
             transform: translateY(20px);
             transition: all 0.3s ease;
         }
-
         .wr-toast.show {
             opacity: 1;
             transform: translateY(0);
         }
-
         .wr-toast.success {
             background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
         }
-
         .wr-toast.error {
             background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
         }
-
-        /* 平台标识 */
+        .wr-tips {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 15px;
+            font-size: 12px;
+            color: #856404;
+        }
+        .wr-tips strong {
+            display: block;
+            margin-bottom: 5px;
+        }
         .wr-platform-badge {
             display: inline-block;
             padding: 3px 8px;
@@ -445,7 +334,6 @@
             font-weight: 600;
             margin-left: 10px;
         }
-
         .wr-platform-netease { background: #c20c0c; color: white; }
         .wr-platform-qq { background: #31c27c; color: white; }
         .wr-platform-kugou { background: #009fe8; color: white; }
@@ -453,35 +341,42 @@
         .wr-platform-migu { background: #ff4081; color: white; }
         .wr-platform-ximalaya { background: #f26b1f; color: white; }
         .wr-platform-bilibili { background: #fb7299; color: white; }
-
-        /* 内联歌曲下载按钮 */
-        .wr-inline-download-btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
+        .wr-refresh-btn {
+            background: none;
+            border: 1px solid #667eea;
+            color: #667eea;
+            padding: 5px 12px;
+            border-radius: 5px;
+            font-size: 12px;
             cursor: pointer;
-            margin-left: 8px;
-            transition: all 0.3s ease;
-            vertical-align: middle;
+            margin-left: auto;
         }
-
-        .wr-inline-download-btn:hover {
-            transform: scale(1.15);
-            box-shadow: 0 3px 10px rgba(102, 126, 234, 0.4);
+        .wr-refresh-btn:hover {
+            background: #667eea;
+            color: white;
         }
-
-        .wr-inline-download-btn svg {
-            width: 14px;
-            height: 14px;
-            fill: white;
+        .wr-quality-select {
+            margin-bottom: 15px;
         }
-
-        /* 暗色模式支持 */
+        .wr-quality-select label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .wr-quality-select select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            cursor: pointer;
+        }
+        .wr-quality-select select:focus {
+            border-color: #667eea;
+        }
         @media (prefers-color-scheme: dark) {
             .wr-music-modal {
                 background: #1a1a2e;
@@ -489,39 +384,39 @@
             .wr-music-modal-body {
                 color: #e0e0e0;
             }
-            .wr-song-info {
+            .wr-song-info, .wr-audio-item {
                 background: #252542;
             }
-            .wr-song-details h3 {
+            .wr-audio-item:hover {
+                background: #2d2d4a;
+            }
+            .wr-song-details h3, .wr-audio-list-title, .wr-audio-item-name {
                 color: #fff;
             }
-            .wr-song-details p {
+            .wr-song-details p, .wr-audio-item-meta {
                 color: #aaa;
             }
-            .wr-quality-title {
+            .wr-tips {
+                background: #3d3d00;
+                border-color: #666600;
+                color: #ffff99;
+            }
+            .wr-quality-select label {
                 color: #fff;
             }
-            .wr-quality-option {
-                border-color: #333;
+            .wr-quality-select select {
                 background: #252542;
-            }
-            .wr-quality-option .quality-name {
                 color: #fff;
-            }
-            .wr-song-item:hover {
-                background: #252542;
-            }
-            .wr-song-item-title {
-                color: #fff;
+                border-color: #444;
             }
         }
     `;
 
     // ==================== 工具函数 ====================
     const Utils = {
-        log: (msg, type = 'info') => {
-            if (CONFIG.debugMode || type === 'error') {
-                console[type](`[${CONFIG.name}] ${msg}`);
+        log: (msg, data = '') => {
+            if (CONFIG.debugMode) {
+                console.log(`[${CONFIG.name}] ${msg}`, data);
             }
         },
 
@@ -541,24 +436,6 @@
             }, 3000);
         },
 
-        downloadFile: (url, filename) => {
-            return new Promise((resolve, reject) => {
-                GM_download({
-                    url: url,
-                    name: filename,
-                    saveAs: false,
-                    onload: () => resolve(),
-                    onerror: (error) => reject(error),
-                    onprogress: (progress) => {
-                        if (progress.totalSize > 0) {
-                            const percent = Math.round((progress.loaded / progress.totalSize) * 100);
-                            UI.updateProgress(percent);
-                        }
-                    }
-                });
-            });
-        },
-
         request: (options) => {
             return new Promise((resolve, reject) => {
                 GM_xmlhttpRequest({
@@ -567,23 +444,29 @@
                     headers: options.headers || {},
                     data: options.data,
                     responseType: options.responseType || 'json',
+                    timeout: 15000,
                     onload: (response) => {
-                        if (response.status >= 200 && response.status < 300) {
-                            resolve(response.response || response.responseText);
-                        } else {
-                            reject(new Error(`HTTP ${response.status}`));
+                        try {
+                            let data = response.response;
+                            if (typeof data === 'string') {
+                                try { data = JSON.parse(data); } catch(e) {}
+                            }
+                            resolve(data);
+                        } catch (e) {
+                            resolve(response.responseText);
                         }
                     },
-                    onerror: (error) => reject(error)
+                    onerror: (error) => reject(error),
+                    ontimeout: () => reject(new Error('请求超时'))
                 });
             });
         },
 
         sanitizeFilename: (name) => {
-            return name.replace(/[<>:"/\\|?*]/g, '_').substring(0, 200);
+            return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').substring(0, 200);
         },
 
-        getPlatformFromUrl: () => {
+        getPlatform: () => {
             const host = location.hostname;
             if (host.includes('163.com')) return 'netease';
             if (host.includes('qq.com')) return 'qq';
@@ -592,9 +475,193 @@
             if (host.includes('migu.cn')) return 'migu';
             if (host.includes('ximalaya.com')) return 'ximalaya';
             if (host.includes('bilibili.com')) return 'bilibili';
-            if (host.includes('youtube.com')) return 'youtube';
-            if (host.includes('spotify.com')) return 'spotify';
             return 'unknown';
+        },
+
+        getPlatformName: (platform) => {
+            const names = {
+                netease: '网易云音乐',
+                qq: 'QQ音乐',
+                kugou: '酷狗音乐',
+                kuwo: '酷我音乐',
+                migu: '咪咕音乐',
+                ximalaya: '喜马拉雅',
+                bilibili: '哔哩哔哩'
+            };
+            return names[platform] || '未知平台';
+        },
+
+        formatFileSize: (bytes) => {
+            if (!bytes) return '未知大小';
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
+        },
+
+        downloadWithFetch: async (url, filename) => {
+            try {
+                // 使用GM_download
+                return new Promise((resolve, reject) => {
+                    GM_download({
+                        url: url,
+                        name: filename,
+                        saveAs: true,
+                        onload: () => {
+                            Utils.toast('下载成功: ' + filename, 'success');
+                            resolve();
+                        },
+                        onerror: (err) => {
+                            Utils.log('GM_download失败，尝试备用方案', err);
+                            // 备用方案：打开新窗口
+                            window.open(url, '_blank');
+                            Utils.toast('已在新窗口打开下载链接', 'success');
+                            resolve();
+                        }
+                    });
+                });
+            } catch (e) {
+                // 最后的备用方案
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.target = '_blank';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                Utils.toast('已开始下载', 'success');
+            }
+        }
+    };
+
+    // ==================== 音频捕获器 ====================
+    const AudioCapture = {
+        captured: [],
+
+        init: () => {
+            // 监听所有XHR请求
+            AudioCapture.hookXHR();
+            // 监听fetch请求
+            AudioCapture.hookFetch();
+            // 监听audio/video元素
+            AudioCapture.watchMediaElements();
+
+            Utils.log('音频捕获器已初始化');
+        },
+
+        hookXHR: () => {
+            const originalOpen = XMLHttpRequest.prototype.open;
+            const originalSend = XMLHttpRequest.prototype.send;
+
+            XMLHttpRequest.prototype.open = function(method, url) {
+                this._url = url;
+                return originalOpen.apply(this, arguments);
+            };
+
+            XMLHttpRequest.prototype.send = function() {
+                this.addEventListener('load', function() {
+                    AudioCapture.checkUrl(this._url, 'xhr');
+                });
+                return originalSend.apply(this, arguments);
+            };
+        },
+
+        hookFetch: () => {
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {
+                if (typeof url === 'string') {
+                    AudioCapture.checkUrl(url, 'fetch');
+                }
+                return originalFetch.apply(this, arguments);
+            };
+        },
+
+        watchMediaElements: () => {
+            // 监听现有的audio/video元素
+            const checkMedia = () => {
+                document.querySelectorAll('audio, video').forEach(el => {
+                    if (el.src) {
+                        AudioCapture.checkUrl(el.src, 'media-element');
+                    }
+                    // 检查source子元素
+                    el.querySelectorAll('source').forEach(source => {
+                        if (source.src) {
+                            AudioCapture.checkUrl(source.src, 'source-element');
+                        }
+                    });
+                });
+            };
+
+            checkMedia();
+
+            // 监听DOM变化
+            const observer = new MutationObserver(() => {
+                checkMedia();
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+        },
+
+        checkUrl: (url, source) => {
+            if (!url || typeof url !== 'string') return;
+
+            // 检查是否是音频URL
+            const audioPatterns = [
+                /\.mp3(\?|$)/i,
+                /\.m4a(\?|$)/i,
+                /\.flac(\?|$)/i,
+                /\.wav(\?|$)/i,
+                /\.aac(\?|$)/i,
+                /\.ogg(\?|$)/i,
+                /\.wma(\?|$)/i,
+                /audio/i,
+                /music/i,
+                /song/i,
+                /vod.*m3u8/i,
+                /m4s.*audio/i
+            ];
+
+            const isAudio = audioPatterns.some(pattern => pattern.test(url));
+
+            // 排除一些不需要的URL
+            const excludePatterns = [
+                /\.js(\?|$)/i,
+                /\.css(\?|$)/i,
+                /\.png(\?|$)/i,
+                /\.jpg(\?|$)/i,
+                /\.gif(\?|$)/i,
+                /\.svg(\?|$)/i,
+                /analytics/i,
+                /tracking/i,
+                /advertisement/i
+            ];
+
+            const isExcluded = excludePatterns.some(pattern => pattern.test(url));
+
+            if (isAudio && !isExcluded) {
+                // 避免重复添加
+                if (!AudioCapture.captured.find(item => item.url === url)) {
+                    const info = {
+                        url: url,
+                        source: source,
+                        time: new Date().toLocaleTimeString(),
+                        format: AudioCapture.getFormat(url)
+                    };
+                    AudioCapture.captured.push(info);
+                    Utils.log('捕获到音频:', info);
+                }
+            }
+        },
+
+        getFormat: (url) => {
+            const match = url.match(/\.(mp3|m4a|flac|wav|aac|ogg|wma)/i);
+            return match ? match[1].toUpperCase() : 'MP3';
+        },
+
+        getCaptured: () => {
+            return AudioCapture.captured;
+        },
+
+        clear: () => {
+            AudioCapture.captured = [];
         }
     };
 
@@ -602,35 +669,33 @@
     const Platforms = {
         // 网易云音乐
         netease: {
-            name: '网易云音乐',
-            color: '#c20c0c',
-
             getSongInfo: async () => {
                 const url = location.href;
                 let songId = null;
 
-                // 从URL获取歌曲ID
-                const match = url.match(/song\?id=(\d+)/) || url.match(/song\/(\d+)/);
-                if (match) {
-                    songId = match[1];
+                // 从URL获取
+                const match = url.match(/song[\/\?].*?(\d+)/) || url.match(/id=(\d+)/);
+                if (match) songId = match[1];
+
+                // 从iframe获取 (网易云使用iframe)
+                if (!songId) {
+                    try {
+                        const iframe = document.querySelector('iframe[name="contentFrame"]');
+                        if (iframe && iframe.contentWindow) {
+                            const iframeUrl = iframe.contentWindow.location.href;
+                            const iframeMatch = iframeUrl.match(/song[\/\?].*?(\d+)/) || iframeUrl.match(/id=(\d+)/);
+                            if (iframeMatch) songId = iframeMatch[1];
+                        }
+                    } catch (e) {}
                 }
 
-                // 尝试从页面获取
+                // 从播放器获取
                 if (!songId) {
-                    const audioSrc = document.querySelector('audio')?.src;
-                    if (audioSrc) {
-                        const audioMatch = audioSrc.match(/song\/(\d+)/);
-                        if (audioMatch) songId = audioMatch[1];
-                    }
-                }
-
-                if (!songId) {
-                    // 尝试从播放器获取当前播放歌曲
-                    const playingInfo = document.querySelector('.play-bar .song-name, .m-playbar .name');
-                    if (playingInfo) {
-                        const link = playingInfo.closest('a') || playingInfo.querySelector('a');
-                        if (link) {
-                            const linkMatch = link.href.match(/song\?id=(\d+)/);
+                    const player = document.querySelector('.m-player, .g-btmbar');
+                    if (player) {
+                        const songLink = player.querySelector('a[href*="song"]');
+                        if (songLink) {
+                            const linkMatch = songLink.href.match(/id=(\d+)/);
                             if (linkMatch) songId = linkMatch[1];
                         }
                     }
@@ -639,11 +704,11 @@
                 if (!songId) return null;
 
                 try {
-                    // 获取歌曲详情
-                    const detailUrl = `https://music.163.com/api/song/detail?ids=[${songId}]`;
-                    const detail = await Utils.request({ url: detailUrl });
+                    const detail = await Utils.request({
+                        url: `https://music.163.com/api/song/detail?ids=[${songId}]`
+                    });
 
-                    if (detail.songs && detail.songs.length > 0) {
+                    if (detail && detail.songs && detail.songs[0]) {
                         const song = detail.songs[0];
                         return {
                             id: songId,
@@ -655,93 +720,90 @@
                         };
                     }
                 } catch (e) {
-                    Utils.log('获取网易云歌曲信息失败: ' + e.message, 'error');
+                    Utils.log('获取网易云歌曲详情失败', e);
                 }
 
-                return null;
+                // 从页面元素获取信息
+                const nameEl = document.querySelector('.tit .name, .f-ff2.f-brk, h1.name');
+                const artistEl = document.querySelector('.des .name, .singer, span.name a');
+
+                if (nameEl) {
+                    return {
+                        id: songId,
+                        name: nameEl.textContent.trim(),
+                        artist: artistEl ? artistEl.textContent.trim() : '未知歌手',
+                        album: '',
+                        cover: document.querySelector('.u-cover img, .j-img')?.src || '',
+                        platform: 'netease'
+                    };
+                }
+
+                return { id: songId, name: '未知歌曲', artist: '未知歌手', platform: 'netease' };
             },
 
-            getDownloadUrl: async (songInfo, quality) => {
-                const qualityMap = {
-                    low: 128000,
-                    medium: 192000,
-                    high: 320000,
-                    lossless: 999000
-                };
+            getDownloadUrls: async (songInfo) => {
+                const urls = [];
 
-                const br = qualityMap[quality] || 320000;
+                // 方法1: 官方外链
+                urls.push({
+                    url: `https://music.163.com/song/media/outer/url?id=${songInfo.id}.mp3`,
+                    quality: '标准音质',
+                    format: 'MP3'
+                });
 
+                // 方法2: 尝试其他API
                 try {
-                    // 使用多个API源尝试获取
                     const apis = [
-                        `https://music.163.com/song/media/outer/url?id=${songInfo.id}.mp3`,
-                        `https://api.injahow.cn/meting/?type=url&id=${songInfo.id}&source=netease`,
+                        `https://api.paugram.com/netease/?id=${songInfo.id}`,
+                        `https://autumnfish.cn/song/url?id=${songInfo.id}`,
                     ];
 
-                    // 尝试直接链接
-                    const directUrl = apis[0];
+                    for (const api of apis) {
+                        try {
+                            const data = await Utils.request({ url: api });
+                            if (data && data.data && data.data[0] && data.data[0].url) {
+                                urls.push({
+                                    url: data.data[0].url,
+                                    quality: '高音质',
+                                    format: 'MP3'
+                                });
+                                break;
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
 
-                    return {
-                        url: directUrl,
-                        format: 'mp3',
-                        quality: quality
-                    };
-                } catch (e) {
-                    Utils.log('获取下载链接失败: ' + e.message, 'error');
-                    return null;
-                }
-            },
-
-            getAvailableQualities: () => {
-                return [
-                    { id: 'low', name: '标准', desc: '128kbps MP3' },
-                    { id: 'medium', name: '较高', desc: '192kbps MP3' },
-                    { id: 'high', name: '极高', desc: '320kbps MP3' },
-                    { id: 'lossless', name: '无损', desc: 'FLAC/APE' }
-                ];
+                return urls;
             }
         },
 
         // QQ音乐
         qq: {
-            name: 'QQ音乐',
-            color: '#31c27c',
-
             getSongInfo: async () => {
                 const url = location.href;
                 let songMid = null;
 
                 const match = url.match(/songDetail\/([a-zA-Z0-9]+)/) || url.match(/song\/([a-zA-Z0-9]+)/);
-                if (match) {
-                    songMid = match[1];
-                }
+                if (match) songMid = match[1];
 
-                // 从页面元素获取
+                // 从页面获取
                 if (!songMid) {
-                    const dataAttr = document.querySelector('[data-mid]');
-                    if (dataAttr) songMid = dataAttr.getAttribute('data-mid');
-                }
-
-                if (!songMid) {
-                    // 尝试从播放器获取
-                    const player = unsafeWindow?.player;
-                    if (player && player.getCurrentSong) {
-                        const currentSong = player.getCurrentSong();
-                        if (currentSong) songMid = currentSong.mid;
-                    }
+                    const el = document.querySelector('[data-stat*="songid"], [data-id]');
+                    if (el) songMid = el.getAttribute('data-stat')?.match(/songid=([^&]+)/)?.[1] || el.getAttribute('data-id');
                 }
 
                 if (!songMid) return null;
 
                 try {
-                    const detailUrl = `https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg?songmid=${songMid}&format=json`;
-                    const detail = await Utils.request({ url: detailUrl });
+                    const detail = await Utils.request({
+                        url: `https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg?songmid=${songMid}&format=json`
+                    });
 
-                    if (detail.data && detail.data.length > 0) {
+                    if (detail && detail.data && detail.data[0]) {
                         const song = detail.data[0];
                         return {
                             id: songMid,
-                            songId: song.songid,
+                            mid: songMid,
                             name: song.songname,
                             artist: song.singer.map(s => s.name).join('/'),
                             album: song.albumname,
@@ -750,47 +812,37 @@
                         };
                     }
                 } catch (e) {
-                    Utils.log('获取QQ音乐歌曲信息失败: ' + e.message, 'error');
+                    Utils.log('获取QQ音乐详情失败', e);
                 }
 
-                return null;
-            },
+                // 从页面元素获取
+                const nameEl = document.querySelector('.data__name, .song_name h1');
+                const artistEl = document.querySelector('.data__singer, .singer_name');
 
-            getDownloadUrl: async (songInfo, quality) => {
-                try {
-                    // QQ音乐下载链接获取
-                    const url = `https://api.injahow.cn/meting/?type=url&id=${songInfo.id}&source=tencent`;
-                    const data = await Utils.request({ url });
-
-                    if (data && data.url) {
-                        return {
-                            url: data.url,
-                            format: 'mp3',
-                            quality: quality
-                        };
-                    }
-                } catch (e) {
-                    Utils.log('获取QQ音乐下载链接失败: ' + e.message, 'error');
+                if (nameEl) {
+                    return {
+                        id: songMid,
+                        name: nameEl.textContent.trim(),
+                        artist: artistEl ? artistEl.textContent.trim() : '未知歌手',
+                        platform: 'qq'
+                    };
                 }
 
-                return null;
+                return { id: songMid, name: '未知歌曲', artist: '未知歌手', platform: 'qq' };
             },
 
-            getAvailableQualities: () => {
-                return [
-                    { id: 'low', name: '标准', desc: '128kbps MP3' },
-                    { id: 'medium', name: '高品', desc: '192kbps MP3' },
-                    { id: 'high', name: 'HQ高品质', desc: '320kbps MP3' },
-                    { id: 'lossless', name: 'SQ无损', desc: 'FLAC' }
-                ];
+            getDownloadUrls: async (songInfo) => {
+                const urls = [];
+
+                // QQ音乐需要复杂的签名，这里提供一些可能的方案
+                // 主要依赖页面上的音频捕获
+
+                return urls;
             }
         },
 
         // 酷狗音乐
         kugou: {
-            name: '酷狗音乐',
-            color: '#009fe8',
-
             getSongInfo: async () => {
                 const url = location.href;
                 let hash = null;
@@ -800,17 +852,9 @@
 
                 // 从页面获取
                 if (!hash) {
-                    const audioPlayer = document.querySelector('audio');
-                    if (audioPlayer && audioPlayer.dataset.hash) {
-                        hash = audioPlayer.dataset.hash;
-                    }
-                }
-
-                if (!hash) {
-                    // 尝试从页面数据获取
                     const scripts = document.querySelectorAll('script');
                     for (const script of scripts) {
-                        const hashMatch = script.textContent.match(/"hash":"([a-fA-F0-9]+)"/);
+                        const hashMatch = script.textContent.match(/"hash":\s*"([a-fA-F0-9]+)"/);
                         if (hashMatch) {
                             hash = hashMatch[1];
                             break;
@@ -821,203 +865,125 @@
                 if (!hash) return null;
 
                 try {
-                    const detailUrl = `https://wwwapi.kugou.com/yy/index.php?r=play/getdata&hash=${hash}`;
-                    const detail = await Utils.request({ url: detailUrl });
+                    const detail = await Utils.request({
+                        url: `https://wwwapi.kugou.com/yy/index.php?r=play/getdata&hash=${hash}`
+                    });
 
-                    if (detail.data) {
-                        const song = detail.data;
+                    if (detail && detail.data) {
                         return {
                             id: hash,
-                            name: song.song_name || song.audio_name,
-                            artist: song.author_name,
-                            album: song.album_name,
-                            cover: song.img,
+                            name: detail.data.song_name || detail.data.audio_name,
+                            artist: detail.data.author_name,
+                            album: detail.data.album_name,
+                            cover: detail.data.img,
+                            playUrl: detail.data.play_url,
                             platform: 'kugou'
                         };
                     }
                 } catch (e) {
-                    Utils.log('获取酷狗歌曲信息失败: ' + e.message, 'error');
+                    Utils.log('获取酷狗歌曲详情失败', e);
                 }
 
-                return null;
+                return { id: hash, name: '未知歌曲', artist: '未知歌手', platform: 'kugou' };
             },
 
-            getDownloadUrl: async (songInfo, quality) => {
-                try {
-                    const url = `https://api.injahow.cn/meting/?type=url&id=${songInfo.id}&source=kugou`;
-                    const data = await Utils.request({ url });
+            getDownloadUrls: async (songInfo) => {
+                const urls = [];
 
-                    if (data && data.url) {
-                        return {
-                            url: data.url,
-                            format: 'mp3',
-                            quality: quality
-                        };
-                    }
-                } catch (e) {
-                    Utils.log('获取酷狗下载链接失败: ' + e.message, 'error');
+                if (songInfo.playUrl) {
+                    urls.push({
+                        url: songInfo.playUrl,
+                        quality: '标准音质',
+                        format: 'MP3'
+                    });
                 }
 
-                return null;
-            },
-
-            getAvailableQualities: () => {
-                return [
-                    { id: 'low', name: '标准', desc: '128kbps MP3' },
-                    { id: 'high', name: '高品质', desc: '320kbps MP3' },
-                    { id: 'lossless', name: '无损', desc: 'FLAC' }
-                ];
+                return urls;
             }
         },
 
         // 酷我音乐
         kuwo: {
-            name: '酷我音乐',
-            color: '#f5a623',
-
             getSongInfo: async () => {
                 const url = location.href;
                 let rid = null;
 
-                const match = url.match(/play_detail\/(\d+)/) || url.match(/rid=(\d+)/);
+                const match = url.match(/play_detail\/(\d+)/) || url.match(/rid=(\d+)/) || url.match(/\/(\d+)$/);
                 if (match) rid = match[1];
-
-                if (!rid) {
-                    // 从页面获取
-                    const musicInfo = document.querySelector('.music-info');
-                    if (musicInfo && musicInfo.dataset.rid) {
-                        rid = musicInfo.dataset.rid;
-                    }
-                }
 
                 if (!rid) return null;
 
+                // 从页面获取信息
+                const nameEl = document.querySelector('.name, .song_name h1');
+                const artistEl = document.querySelector('.artist, .singer_name');
+
+                return {
+                    id: rid,
+                    name: nameEl ? nameEl.textContent.trim() : '未知歌曲',
+                    artist: artistEl ? artistEl.textContent.trim() : '未知歌手',
+                    cover: document.querySelector('.album_img img, .cover img')?.src || '',
+                    platform: 'kuwo'
+                };
+            },
+
+            getDownloadUrls: async (songInfo) => {
+                const urls = [];
+
                 try {
-                    const detailUrl = `https://www.kuwo.cn/api/www/music/musicInfo?mid=${rid}`;
-                    const detail = await Utils.request({
-                        url: detailUrl,
+                    // 酷我API
+                    const response = await Utils.request({
+                        url: `https://www.kuwo.cn/api/v1/www/music/playUrl?mid=${songInfo.id}&type=convert_url3&br=320kmp3`,
                         headers: {
                             'Referer': 'https://www.kuwo.cn/',
-                            'csrf': 'xxx'
+                            'Cookie': 'kw_token=xxx'
                         }
                     });
 
-                    if (detail.data) {
-                        const song = detail.data;
-                        return {
-                            id: rid,
-                            name: song.name,
-                            artist: song.artist,
-                            album: song.album,
-                            cover: song.pic,
-                            platform: 'kuwo'
-                        };
+                    if (response && response.data && response.data.url) {
+                        urls.push({
+                            url: response.data.url,
+                            quality: '320kbps',
+                            format: 'MP3'
+                        });
                     }
                 } catch (e) {
-                    Utils.log('获取酷我歌曲信息失败: ' + e.message, 'error');
+                    Utils.log('获取酷我下载链接失败', e);
                 }
 
-                return null;
-            },
-
-            getDownloadUrl: async (songInfo, quality) => {
-                try {
-                    const url = `https://api.injahow.cn/meting/?type=url&id=${songInfo.id}&source=kuwo`;
-                    const data = await Utils.request({ url });
-
-                    if (data && data.url) {
-                        return {
-                            url: data.url,
-                            format: 'mp3',
-                            quality: quality
-                        };
-                    }
-                } catch (e) {
-                    Utils.log('获取酷我下载链接失败: ' + e.message, 'error');
-                }
-
-                return null;
-            },
-
-            getAvailableQualities: () => {
-                return [
-                    { id: 'low', name: '标准', desc: '128kbps' },
-                    { id: 'high', name: '高品质', desc: '320kbps' },
-                    { id: 'lossless', name: '无损', desc: 'FLAC' }
-                ];
+                return urls;
             }
         },
 
         // 咪咕音乐
         migu: {
-            name: '咪咕音乐',
-            color: '#ff4081',
-
             getSongInfo: async () => {
                 const url = location.href;
-                let copyrightId = null;
+                let songId = null;
 
                 const match = url.match(/song\/([A-Za-z0-9]+)/);
-                if (match) copyrightId = match[1];
+                if (match) songId = match[1];
 
-                if (!copyrightId) return null;
+                if (!songId) return null;
 
-                try {
-                    const detailUrl = `https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/resourceinfo.do?copyrightId=${copyrightId}&resourceType=2`;
-                    const detail = await Utils.request({ url: detailUrl });
+                const nameEl = document.querySelector('.song-info .song-name, .song_name');
+                const artistEl = document.querySelector('.song-info .singer-name, .singer_name');
 
-                    if (detail.resource && detail.resource.length > 0) {
-                        const song = detail.resource[0];
-                        return {
-                            id: copyrightId,
-                            contentId: song.contentId,
-                            name: song.songName,
-                            artist: song.singer,
-                            album: song.album,
-                            cover: song.albumImgs && song.albumImgs[0] ? song.albumImgs[0].img : '',
-                            platform: 'migu'
-                        };
-                    }
-                } catch (e) {
-                    Utils.log('获取咪咕歌曲信息失败: ' + e.message, 'error');
-                }
-
-                return null;
+                return {
+                    id: songId,
+                    name: nameEl ? nameEl.textContent.trim() : '未知歌曲',
+                    artist: artistEl ? artistEl.textContent.trim() : '未知歌手',
+                    cover: document.querySelector('.song-cover img, .cover img')?.src || '',
+                    platform: 'migu'
+                };
             },
 
-            getDownloadUrl: async (songInfo, quality) => {
-                try {
-                    const url = `https://api.injahow.cn/meting/?type=url&id=${songInfo.id}&source=migu`;
-                    const data = await Utils.request({ url });
-
-                    if (data && data.url) {
-                        return {
-                            url: data.url,
-                            format: 'mp3',
-                            quality: quality
-                        };
-                    }
-                } catch (e) {
-                    Utils.log('获取咪咕下载链接失败: ' + e.message, 'error');
-                }
-
-                return null;
-            },
-
-            getAvailableQualities: () => {
-                return [
-                    { id: 'low', name: '标准', desc: '128kbps' },
-                    { id: 'high', name: 'HQ', desc: '320kbps' },
-                    { id: 'lossless', name: '无损', desc: 'FLAC' }
-                ];
+            getDownloadUrls: async (songInfo) => {
+                return [];
             }
         },
 
         // 喜马拉雅
         ximalaya: {
-            name: '喜马拉雅',
-            color: '#f26b1f',
-
             getSongInfo: async () => {
                 const url = location.href;
                 let trackId = null;
@@ -1028,140 +994,128 @@
                 if (!trackId) return null;
 
                 try {
-                    const detailUrl = `https://www.ximalaya.com/revision/play/v1/audio?id=${trackId}&ptype=1`;
-                    const detail = await Utils.request({ url: detailUrl });
+                    const detail = await Utils.request({
+                        url: `https://www.ximalaya.com/revision/play/v1/audio?id=${trackId}&ptype=1`
+                    });
 
-                    if (detail.data) {
-                        const track = detail.data;
+                    if (detail && detail.data) {
                         return {
                             id: trackId,
-                            name: track.trackName || document.querySelector('.sound-title')?.textContent,
-                            artist: track.nickname || document.querySelector('.nickname')?.textContent,
-                            album: document.querySelector('.album-title')?.textContent || '',
-                            cover: track.coverPath || document.querySelector('.sound-cover img')?.src,
-                            src: track.src,
+                            name: detail.data.trackName || document.querySelector('.sound-title, .title-wrapper h1')?.textContent || '未知音频',
+                            artist: detail.data.nickname || document.querySelector('.username')?.textContent || '未知主播',
+                            cover: detail.data.coverPath,
+                            playUrl: detail.data.src,
                             platform: 'ximalaya'
                         };
                     }
                 } catch (e) {
-                    Utils.log('获取喜马拉雅音频信息失败: ' + e.message, 'error');
+                    Utils.log('获取喜马拉雅音频详情失败', e);
                 }
 
-                return null;
+                return {
+                    id: trackId,
+                    name: document.querySelector('.sound-title, .title-wrapper h1')?.textContent || '未知音频',
+                    artist: document.querySelector('.username')?.textContent || '未知主播',
+                    platform: 'ximalaya'
+                };
             },
 
-            getDownloadUrl: async (songInfo, quality) => {
-                if (songInfo.src) {
-                    return {
-                        url: songInfo.src,
-                        format: 'm4a',
-                        quality: 'high'
-                    };
+            getDownloadUrls: async (songInfo) => {
+                const urls = [];
+
+                if (songInfo.playUrl) {
+                    urls.push({
+                        url: songInfo.playUrl,
+                        quality: '高清音质',
+                        format: 'M4A'
+                    });
                 }
-                return null;
-            },
 
-            getAvailableQualities: () => {
-                return [
-                    { id: 'high', name: '高清', desc: '64kbps M4A' }
-                ];
+                return urls;
             }
         },
 
         // B站
         bilibili: {
-            name: '哔哩哔哩',
-            color: '#fb7299',
-
             getSongInfo: async () => {
                 const url = location.href;
-                let aid = null, bvid = null;
+                let bvid = null;
 
-                const bvMatch = url.match(/BV([a-zA-Z0-9]+)/);
-                const avMatch = url.match(/av(\d+)/);
+                const match = url.match(/BV([a-zA-Z0-9]+)/);
+                if (match) bvid = 'BV' + match[1];
 
-                if (bvMatch) bvid = 'BV' + bvMatch[1];
-                if (avMatch) aid = avMatch[1];
-
-                if (!bvid && !aid) return null;
+                if (!bvid) return null;
 
                 try {
-                    const query = bvid ? `bvid=${bvid}` : `aid=${aid}`;
-                    const detailUrl = `https://api.bilibili.com/x/web-interface/view?${query}`;
-                    const detail = await Utils.request({ url: detailUrl });
+                    const detail = await Utils.request({
+                        url: `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`
+                    });
 
-                    if (detail.data) {
-                        const video = detail.data;
+                    if (detail && detail.data) {
                         return {
-                            id: bvid || `av${aid}`,
-                            aid: video.aid,
-                            cid: video.cid,
-                            name: video.title,
-                            artist: video.owner.name,
-                            album: '',
-                            cover: video.pic,
+                            id: bvid,
+                            aid: detail.data.aid,
+                            cid: detail.data.cid,
+                            name: detail.data.title,
+                            artist: detail.data.owner.name,
+                            cover: detail.data.pic,
                             platform: 'bilibili'
                         };
                     }
                 } catch (e) {
-                    Utils.log('获取B站视频信息失败: ' + e.message, 'error');
+                    Utils.log('获取B站视频详情失败', e);
                 }
 
-                return null;
+                return {
+                    id: bvid,
+                    name: document.querySelector('.video-title, h1.title')?.textContent || '未知视频',
+                    artist: document.querySelector('.username')?.textContent || '未知UP主',
+                    platform: 'bilibili'
+                };
             },
 
-            getDownloadUrl: async (songInfo, quality) => {
+            getDownloadUrls: async (songInfo) => {
+                const urls = [];
+
+                if (!songInfo.aid || !songInfo.cid) return urls;
+
                 try {
-                    const playUrl = `https://api.bilibili.com/x/player/playurl?avid=${songInfo.aid}&cid=${songInfo.cid}&fnval=16`;
-                    const play = await Utils.request({ url: playUrl });
+                    const playInfo = await Utils.request({
+                        url: `https://api.bilibili.com/x/player/playurl?avid=${songInfo.aid}&cid=${songInfo.cid}&fnval=16`
+                    });
 
-                    if (play.data && play.data.dash && play.data.dash.audio) {
-                        const audios = play.data.dash.audio;
-                        // 选择最高质量音频
-                        const audio = audios.sort((a, b) => b.bandwidth - a.bandwidth)[0];
-
-                        return {
-                            url: audio.baseUrl,
-                            format: 'm4a',
-                            quality: 'high'
-                        };
+                    if (playInfo && playInfo.data && playInfo.data.dash && playInfo.data.dash.audio) {
+                        const audios = playInfo.data.dash.audio.sort((a, b) => b.bandwidth - a.bandwidth);
+                        if (audios[0]) {
+                            urls.push({
+                                url: audios[0].baseUrl,
+                                quality: '高质量音频',
+                                format: 'M4A',
+                                needReferer: true
+                            });
+                        }
                     }
                 } catch (e) {
-                    Utils.log('获取B站音频链接失败: ' + e.message, 'error');
+                    Utils.log('获取B站音频失败', e);
                 }
 
-                return null;
-            },
-
-            getAvailableQualities: () => {
-                return [
-                    { id: 'high', name: '高质量', desc: '320kbps AAC' }
-                ];
+                return urls;
             }
         }
     };
 
-    // ==================== UI模块 ====================
+    // ==================== UI ====================
     const UI = {
-        container: null,
         modal: null,
-        currentSong: null,
-        selectedQuality: 'high',
 
         init: () => {
             GM_addStyle(STYLES);
-            UI.createMainButton();
+            UI.createButton();
             UI.createModal();
-            UI.injectInlineButtons();
-
-            // 监听页面变化，自动注入按钮
-            const observer = new MutationObserver(() => {
-                UI.injectInlineButtons();
-            });
-            observer.observe(document.body, { childList: true, subtree: true });
+            AudioCapture.init();
         },
 
-        createMainButton: () => {
+        createButton: () => {
             const btn = document.createElement('button');
             btn.className = 'wr-music-download-btn';
             btn.title = CONFIG.name;
@@ -1170,7 +1124,7 @@
                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-5l-2.5 2.5-1.41-1.41L12 7.17l4.91 4.92-1.41 1.41L13 11v5.5h-2z" transform="rotate(180 12 12)"/>
                 </svg>
             `;
-            btn.addEventListener('click', UI.openModal);
+            btn.onclick = () => UI.openModal();
             document.body.appendChild(btn);
         },
 
@@ -1179,23 +1133,20 @@
             overlay.className = 'wr-music-modal-overlay';
             overlay.innerHTML = `
                 <div class="wr-music-modal">
-                    <div class="wr-music-modal-header" style="position: relative;">
+                    <div class="wr-music-modal-header">
                         <h2 class="wr-music-modal-title">${CONFIG.name}</h2>
                         <p class="wr-music-modal-subtitle">v${CONFIG.version} by ${CONFIG.author}</p>
                         <button class="wr-music-modal-close">&times;</button>
                     </div>
-                    <div class="wr-music-modal-body">
-                        <div id="wr-modal-content">
-                            <div class="wr-status-message loading">正在检测当前页面音乐...</div>
-                        </div>
+                    <div class="wr-music-modal-body" id="wr-modal-content">
                     </div>
                 </div>
             `;
 
-            overlay.querySelector('.wr-music-modal-close').addEventListener('click', UI.closeModal);
-            overlay.addEventListener('click', (e) => {
+            overlay.querySelector('.wr-music-modal-close').onclick = () => UI.closeModal();
+            overlay.onclick = (e) => {
                 if (e.target === overlay) UI.closeModal();
-            });
+            };
 
             document.body.appendChild(overlay);
             UI.modal = overlay;
@@ -1203,10 +1154,12 @@
 
         openModal: async () => {
             UI.modal.classList.add('active');
-            const content = UI.modal.querySelector('#wr-modal-content');
-            content.innerHTML = '<div class="wr-status-message loading">正在检测当前页面音乐...</div>';
+            const content = document.getElementById('wr-modal-content');
+            content.innerHTML = '<div class="wr-status-message loading">正在分析页面...</div>';
 
-            const platform = Utils.getPlatformFromUrl();
+            const platform = Utils.getPlatform();
+            const platformName = Utils.getPlatformName(platform);
+
             if (platform === 'unknown' || !Platforms[platform]) {
                 content.innerHTML = `
                     <div class="wr-status-message">
@@ -1219,185 +1172,159 @@
                 return;
             }
 
+            // 获取歌曲信息
             const handler = Platforms[platform];
             const songInfo = await handler.getSongInfo();
+            const apiUrls = songInfo ? await handler.getDownloadUrls(songInfo) : [];
+            const capturedUrls = AudioCapture.getCaptured();
 
-            if (!songInfo) {
-                content.innerHTML = `
-                    <div class="wr-status-message">
-                        <p>未检测到正在播放的音乐</p>
-                        <p style="font-size: 12px; margin-top: 10px;">
-                            请先在当前页面播放音乐，或打开具体的歌曲页面
-                        </p>
-                    </div>
-                `;
-                return;
-            }
+            Utils.log('歌曲信息:', songInfo);
+            Utils.log('API URLs:', apiUrls);
+            Utils.log('捕获的URLs:', capturedUrls);
 
-            UI.currentSong = songInfo;
-            const qualities = handler.getAvailableQualities();
+            // 构建UI
+            let html = '';
 
-            content.innerHTML = `
-                <div class="wr-song-info">
-                    <img class="wr-song-cover" src="${songInfo.cover || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2NjYyIgZD0iTTEyIDNhOSA5IDAgMCAwLTkgOXY3YzAgMS4xLjkgMiAyIDJoNHYtOEg1di0xYzAtMy44NyAzLjEzLTcgNy03czMuMTMgNyA3djFoLTR2OGg0YzEuMSAwIDItLjkgMi0ydi03YTkgOSAwIDAgMC05LTl6Ii8+PC9zdmc+'}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2NjYyIgZD0iTTEyIDNhOSA5IDAgMCAwLTkgOXY3YzAgMS4xLjkgMiAyIDJoNHYtOEg1di0xYzAtMy44NyAzLjEzLTcgNy03czMuMTMgNyA3djFoLTR2OGg0YzEuMSAwIDItLjkgMi0ydi03YTkgOSAwIDAgMC05LTl6Ii8+PC9zdmc+'">
-                    <div class="wr-song-details">
-                        <h3>${songInfo.name}</h3>
-                        <p>${songInfo.artist}${songInfo.album ? ' · ' + songInfo.album : ''}</p>
-                        <span class="wr-platform-badge wr-platform-${platform}">${handler.name}</span>
-                    </div>
-                </div>
-
-                <div class="wr-quality-section">
-                    <div class="wr-quality-title">选择音质</div>
-                    <div class="wr-quality-options">
-                        ${qualities.map(q => `
-                            <div class="wr-quality-option ${q.id === 'high' ? 'selected' : ''}" data-quality="${q.id}">
-                                <div class="quality-name">${q.name}</div>
-                                <div class="quality-desc">${q.desc}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-
-                <button class="wr-download-btn" id="wr-start-download">
-                    <svg viewBox="0 0 24 24">
-                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-                    </svg>
-                    开始下载
-                </button>
-
-                <div class="wr-progress-container" id="wr-progress">
-                    <div class="wr-progress-bar">
-                        <div class="wr-progress-fill" id="wr-progress-fill"></div>
-                    </div>
-                    <div class="wr-progress-text" id="wr-progress-text">准备下载...</div>
+            // 提示信息
+            html += `
+                <div class="wr-tips">
+                    <strong>使用提示：</strong>
+                    请先播放音乐，脚本会自动捕获播放的音频链接。如果没有捕获到，请刷新页面后重新播放。
                 </div>
             `;
 
-            // 质量选择
-            content.querySelectorAll('.wr-quality-option').forEach(option => {
-                option.addEventListener('click', () => {
-                    if (option.classList.contains('disabled')) return;
-                    content.querySelectorAll('.wr-quality-option').forEach(o => o.classList.remove('selected'));
-                    option.classList.add('selected');
-                    UI.selectedQuality = option.dataset.quality;
+            // 歌曲信息
+            if (songInfo) {
+                html += `
+                    <div class="wr-song-info">
+                        <img class="wr-song-cover" src="${songInfo.cover || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2NjYyIgZD0iTTEyIDNhOSA5IDAgMCAwLTkgOXY3YzAgMS4xLjkgMiAyIDJoNHYtOEg1di0xYzAtMy44NyAzLjEzLTcgNy03czMuMTMgNyA3djFoLTR2OGg0YzEuMSAwIDItLjkgMi0ydi03YTkgOSAwIDAgMC05LTl6Ii8+PC9zdmc+'}"
+                             onerror="this.style.background='#ddd'">
+                        <div class="wr-song-details">
+                            <h3>${songInfo.name || '未知歌曲'}</h3>
+                            <p>${songInfo.artist || '未知歌手'}${songInfo.album ? ' · ' + songInfo.album : ''}</p>
+                            <span class="wr-platform-badge wr-platform-${platform}">${platformName}</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 合并所有可用的下载链接
+            const allUrls = [];
+
+            // 添加API获取的链接
+            apiUrls.forEach(item => {
+                allUrls.push({
+                    ...item,
+                    source: 'API'
                 });
             });
 
-            // 下载按钮
-            content.querySelector('#wr-start-download').addEventListener('click', () => {
-                UI.startDownload(songInfo, UI.selectedQuality);
+            // 添加捕获的链接
+            capturedUrls.forEach(item => {
+                allUrls.push({
+                    url: item.url,
+                    quality: '捕获音频',
+                    format: item.format,
+                    source: '页面捕获'
+                });
             });
+
+            if (allUrls.length > 0) {
+                html += `
+                    <div class="wr-audio-list">
+                        <div class="wr-audio-list-title">
+                            可用下载链接 <span class="count">${allUrls.length}</span>
+                            <button class="wr-refresh-btn" onclick="location.reload()">刷新页面</button>
+                        </div>
+                `;
+
+                allUrls.forEach((item, index) => {
+                    const filename = songInfo
+                        ? Utils.sanitizeFilename(`${songInfo.name} - ${songInfo.artist}.${item.format.toLowerCase()}`)
+                        : `music_${index + 1}.${item.format.toLowerCase()}`;
+
+                    html += `
+                        <div class="wr-audio-item">
+                            <div class="wr-audio-item-info">
+                                <div class="wr-audio-item-name">${item.quality} (${item.format})</div>
+                                <div class="wr-audio-item-meta">来源: ${item.source}</div>
+                            </div>
+                            <button class="wr-audio-item-btn" onclick="window.wrDownload('${encodeURIComponent(item.url)}', '${encodeURIComponent(filename)}')">
+                                下载
+                            </button>
+                        </div>
+                    `;
+                });
+
+                html += `</div>`;
+
+                // 主下载按钮
+                if (allUrls.length > 0 && songInfo) {
+                    const bestUrl = allUrls[0];
+                    const filename = Utils.sanitizeFilename(`${songInfo.name} - ${songInfo.artist}.${bestUrl.format.toLowerCase()}`);
+
+                    html += `
+                        <button class="wr-download-btn" onclick="window.wrDownload('${encodeURIComponent(bestUrl.url)}', '${encodeURIComponent(filename)}')">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                            </svg>
+                            下载最佳音质
+                        </button>
+                    `;
+                }
+            } else {
+                html += `
+                    <div class="wr-audio-list">
+                        <div class="wr-audio-list-title">
+                            可用下载链接 <span class="count">0</span>
+                            <button class="wr-refresh-btn" onclick="location.reload()">刷新页面</button>
+                        </div>
+                        <div class="wr-status-message">
+                            <p>未捕获到音频链接</p>
+                            <p style="font-size: 12px; margin-top: 10px;">
+                                请确保音乐正在播放，或尝试刷新页面后重新播放
+                            </p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            content.innerHTML = html;
         },
 
         closeModal: () => {
             UI.modal.classList.remove('active');
-        },
-
-        startDownload: async (songInfo, quality) => {
-            const downloadBtn = document.querySelector('#wr-start-download');
-            const progressContainer = document.querySelector('#wr-progress');
-            const progressText = document.querySelector('#wr-progress-text');
-
-            downloadBtn.disabled = true;
-            downloadBtn.innerHTML = '获取下载链接...';
-            progressContainer.classList.add('active');
-            progressText.textContent = '正在获取下载链接...';
-
-            try {
-                const handler = Platforms[songInfo.platform];
-                const downloadInfo = await handler.getDownloadUrl(songInfo, quality);
-
-                if (!downloadInfo || !downloadInfo.url) {
-                    throw new Error('无法获取下载链接');
-                }
-
-                progressText.textContent = '开始下载...';
-
-                const filename = Utils.sanitizeFilename(
-                    `${songInfo.name} - ${songInfo.artist}.${downloadInfo.format}`
-                );
-
-                await Utils.downloadFile(downloadInfo.url, filename);
-
-                progressText.textContent = '下载完成!';
-                UI.updateProgress(100);
-                Utils.toast('下载成功: ' + songInfo.name, 'success');
-
-                setTimeout(() => {
-                    downloadBtn.disabled = false;
-                    downloadBtn.innerHTML = `
-                        <svg viewBox="0 0 24 24">
-                            <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-                        </svg>
-                        重新下载
-                    `;
-                }, 2000);
-
-            } catch (error) {
-                Utils.log('下载失败: ' + error.message, 'error');
-                progressText.textContent = '下载失败: ' + error.message;
-                Utils.toast('下载失败，请重试', 'error');
-
-                downloadBtn.disabled = false;
-                downloadBtn.innerHTML = `
-                    <svg viewBox="0 0 24 24">
-                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-                    </svg>
-                    重试下载
-                `;
-            }
-        },
-
-        updateProgress: (percent) => {
-            const fill = document.querySelector('#wr-progress-fill');
-            const text = document.querySelector('#wr-progress-text');
-            if (fill) fill.style.width = percent + '%';
-            if (text && percent < 100) text.textContent = `下载中... ${percent}%`;
-        },
-
-        injectInlineButtons: () => {
-            const platform = Utils.getPlatformFromUrl();
-            if (platform === 'unknown') return;
-
-            // 针对不同平台注入下载按钮
-            const selectors = {
-                netease: [
-                    '.m-sgitem .oper', // 歌曲列表操作区
-                    '.j-flag .btns', // 播放器按钮区
-                    '.song-list-pre-data .list-oper' // 歌单列表
-                ],
-                qq: [
-                    '.songlist__item .songlist__songname', // 歌曲名称区域
-                    '.player_operator' // 播放器操作区
-                ],
-                kugou: [
-                    '.song-item .song-operate', // 歌曲操作区
-                    '.playbar-btn-wrap' // 播放器按钮
-                ]
-            };
-
-            // 这里可以添加更多平台的内联按钮注入逻辑
         }
     };
 
-    // ==================== 主程序 ====================
-    const Main = {
-        init: () => {
-            Utils.log('脚本初始化...');
+    // 全局下载函数
+    window.wrDownload = async (encodedUrl, encodedFilename) => {
+        const url = decodeURIComponent(encodedUrl);
+        const filename = decodeURIComponent(encodedFilename);
 
-            // 等待DOM加载完成
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', UI.init);
-            } else {
-                UI.init();
-            }
+        Utils.log('开始下载:', { url, filename });
+        Utils.toast('正在下载...', 'info');
 
-            Utils.log('初始化完成! 当前平台: ' + Utils.getPlatformFromUrl());
+        try {
+            await Utils.downloadWithFetch(url, filename);
+        } catch (e) {
+            Utils.log('下载失败:', e);
+            Utils.toast('下载失败，请重试', 'error');
         }
     };
 
-    // 启动
-    Main.init();
+    // ==================== 初始化 ====================
+    const init = () => {
+        Utils.log('脚本初始化中...');
 
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', UI.init);
+        } else {
+            UI.init();
+        }
+
+        Utils.log(`初始化完成! 平台: ${Utils.getPlatformName(Utils.getPlatform())}`);
+    };
+
+    init();
 })();
