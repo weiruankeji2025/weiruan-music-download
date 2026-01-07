@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软音乐下载神器
 // @namespace    https://github.com/weiruankeji2025
-// @version      1.1.0
+// @version      1.1.1
 // @description  全网音乐免费下载神器 - 支持网易云音乐、QQ音乐、酷狗音乐、酷我音乐、咪咕音乐等主流平台，一键下载最高音质音乐
 // @author       威软科技
 // @match        *://music.163.com/*
@@ -37,7 +37,7 @@
     // ==================== 配置 ====================
     const CONFIG = {
         name: '威软音乐下载神器',
-        version: '1.1.0',
+        version: '1.1.1',
         author: '威软科技',
         debugMode: true
     };
@@ -1234,7 +1234,7 @@
                     <div class="wr-audio-list">
                         <div class="wr-audio-list-title">
                             可用下载链接 <span class="count">${allUrls.length}</span>
-                            <button class="wr-refresh-btn" onclick="location.reload()">刷新页面</button>
+                            <button class="wr-refresh-btn wr-do-refresh">刷新页面</button>
                         </div>
                 `;
 
@@ -1249,7 +1249,7 @@
                                 <div class="wr-audio-item-name">${item.quality} (${item.format})</div>
                                 <div class="wr-audio-item-meta">来源: ${item.source}</div>
                             </div>
-                            <button class="wr-audio-item-btn" onclick="window.wrDownload('${encodeURIComponent(item.url)}', '${encodeURIComponent(filename)}')">
+                            <button class="wr-audio-item-btn wr-do-download" data-url="${encodeURIComponent(item.url)}" data-filename="${encodeURIComponent(filename)}">
                                 下载
                             </button>
                         </div>
@@ -1264,7 +1264,7 @@
                     const filename = Utils.sanitizeFilename(`${songInfo.name} - ${songInfo.artist}.${bestUrl.format.toLowerCase()}`);
 
                     html += `
-                        <button class="wr-download-btn" onclick="window.wrDownload('${encodeURIComponent(bestUrl.url)}', '${encodeURIComponent(filename)}')">
+                        <button class="wr-download-btn wr-do-download" data-url="${encodeURIComponent(bestUrl.url)}" data-filename="${encodeURIComponent(filename)}">
                             <svg viewBox="0 0 24 24">
                                 <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
                             </svg>
@@ -1277,7 +1277,7 @@
                     <div class="wr-audio-list">
                         <div class="wr-audio-list-title">
                             可用下载链接 <span class="count">0</span>
-                            <button class="wr-refresh-btn" onclick="location.reload()">刷新页面</button>
+                            <button class="wr-refresh-btn wr-do-refresh">刷新页面</button>
                         </div>
                         <div class="wr-status-message">
                             <p>未捕获到音频链接</p>
@@ -1290,26 +1290,35 @@
             }
 
             content.innerHTML = html;
+
+            // 绑定事件（使用事件委托避免沙箱隔离问题）
+            content.addEventListener('click', async (e) => {
+                const downloadBtn = e.target.closest('.wr-do-download');
+                const refreshBtn = e.target.closest('.wr-do-refresh');
+
+                if (downloadBtn) {
+                    e.preventDefault();
+                    const url = decodeURIComponent(downloadBtn.dataset.url);
+                    const filename = decodeURIComponent(downloadBtn.dataset.filename);
+                    Utils.log('开始下载:', { url, filename });
+                    Utils.toast('正在下载...', 'info');
+                    try {
+                        await Utils.downloadWithFetch(url, filename);
+                    } catch (err) {
+                        Utils.log('下载失败:', err);
+                        Utils.toast('下载失败，请重试', 'error');
+                    }
+                }
+
+                if (refreshBtn) {
+                    e.preventDefault();
+                    location.reload();
+                }
+            });
         },
 
         closeModal: () => {
             UI.modal.classList.remove('active');
-        }
-    };
-
-    // 全局下载函数
-    window.wrDownload = async (encodedUrl, encodedFilename) => {
-        const url = decodeURIComponent(encodedUrl);
-        const filename = decodeURIComponent(encodedFilename);
-
-        Utils.log('开始下载:', { url, filename });
-        Utils.toast('正在下载...', 'info');
-
-        try {
-            await Utils.downloadWithFetch(url, filename);
-        } catch (e) {
-            Utils.log('下载失败:', e);
-            Utils.toast('下载失败，请重试', 'error');
         }
     };
 
